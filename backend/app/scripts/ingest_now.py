@@ -1,7 +1,9 @@
-from app.db import SessionLocal
-from app.services.run_ingest import run_all
-from app.models import IngestRun
 from datetime import datetime
+
+from app.db import SessionLocal
+from app.models import IngestRun, ContentItem
+from app.services.run_ingest import run_all
+
 
 def main():
     db = SessionLocal()
@@ -22,6 +24,27 @@ def main():
 
         print(f"Inserted {inserted} items.")
 
+        # Optional: print a small sanity sample so you can confirm enrichment fields are populated
+        sample = (
+            db.query(ContentItem)
+            .order_by(ContentItem.published_at.desc())
+            .limit(5)
+            .all()
+        )
+
+        if sample:
+            print("\n[ENRICH SAMPLE] latest 5 content_items:")
+            for x in sample:
+                print(
+                    f"- sport={x.sport} source={x.source} "
+                    f"dup={getattr(x, 'is_duplicate', None)} "
+                    f"rank={getattr(x, 'rank_score', None)} "
+                    f"urg={getattr(x, 'urgency', None)} "
+                    f"topics={getattr(x, 'topics', None)} "
+                    f"teams={(getattr(x, 'entities', None) or {}).get('teams', []) if getattr(x, 'entities', None) else []} "
+                    f"title={x.title[:90]!r}"
+                )
+
     except Exception as e:
         # best effort to record failure
         try:
@@ -31,11 +54,11 @@ def main():
             db.commit()
         except Exception:
             pass
-
         raise
 
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     main()

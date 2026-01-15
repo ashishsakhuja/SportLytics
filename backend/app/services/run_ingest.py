@@ -27,7 +27,6 @@ FEEDS = [
     # ("NBC Sports", "general", "https://sports.nbcsports.com/feed/"),
 
     # Fox Sports
-
 ]
 
 
@@ -35,6 +34,7 @@ def run_all(db: Session):
     total = 0
     for source, sport, url in FEEDS:
         try:
+            # Enrichment is applied inside ingest_feed() (rss_ingest.py) when items are upserted.
             inserted = ingest_feed(db, url, source=source, sport=sport)
             print(f"[INGEST] {source} {sport}: inserted={inserted}")
             total += inserted
@@ -42,4 +42,3 @@ def run_all(db: Session):
             print(f"[INGEST ERROR] {source} {sport} url={url} err={e}")
             continue
     return total
-

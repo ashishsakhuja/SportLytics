@@ -7,6 +7,17 @@ from ..models import ContentItem
 import re
 from typing import Optional
 
+from app.services.enrich import (
+    classify_topics,
+    compute_rank_score,
+    compute_urgency,
+    extract_teams,
+    make_canonical_id,
+    make_dedupe_group_id,
+    source_tier,
+    build_entities,
+)
+
 # Order matters: more specific first
 SPORT_RULES = [
     ("cfb", [r"\bcollege football\b", r"\bncaa football\b", r"\bncaaf\b", r"\bcfb\b", r"\bbowl\b", r"\bsec\b", r"\bbig ten\b", r"\bacc\b", r"\bbig 12\b", r"\bpac-?12\b"]),
@@ -46,6 +57,7 @@ def classify_sport(title: str, snippet: Optional[str], url: Optional[str]) -> Op
 
     return None
 
+
 def ingest_feed(db: Session, feed_url: str, source: str, sport: str):
     headers = {
         "User-Agent": "SportLyticsBot/1.0 (RSS aggregator; contact: you@example.com)",
@@ -78,7 +90,6 @@ def ingest_feed(db: Session, feed_url: str, source: str, sport: str):
         published_raw = getattr(e, "published", None) or getattr(e, "updated", None)
         if not published_raw:
             continue
-        from datetime import timezone
 
         TZINFOS = {
             "EST": -5 * 3600,
@@ -98,7 +109,7 @@ def ingest_feed(db: Session, feed_url: str, source: str, sport: str):
             dt = dt.replace(tzinfo=timezone.utc)
         published_at = dt.astimezone(timezone.utc).replace(tzinfo=None)  # store as naive UTC
 
-        snippet = getattr(e, "summary", None)
+        snippet = getattr(e, "summary", None) or ""
 
         # dedupe by url (unique constraint)
         exists = db.query(ContentItem).filter(ContentItem.url == url).first()
@@ -111,6 +122,43 @@ def ingest_feed(db: Session, feed_url: str, source: str, sport: str):
             if inferred:
                 effective_sport = inferred
 
+        # ----------------------------
+        # Enrichment + ranking (NEW)
+        # ----------------------------
+        summary_text = (snippet or "").strip()
+
+        teams = extract_teams(title, summary_text)
+        topics = classify_topics(title, summary_text)
+
+        dedupe_group_id = make_dedupe_group_id(title, teams=teams)
+        canonical_id = make_canonical_id(dedupe_group_id)
+
+        tier = source_tier(source)
+        urgency = compute_urgency(published_at, topics)
+
+        # Duplicate story cluster detection (separate from URL dedupe)
+        existing_cluster = (
+            db.query(ContentItem)
+            .filter(ContentItem.dedupe_group_id == dedupe_group_id)
+            .first()
+        )
+        is_duplicate = existing_cluster is not None
+
+        rank_score = compute_rank_score(published_at, tier, urgency, is_duplicate)
+
+        entities = build_entities(
+            teams=teams,
+            players=[],
+            leagues=[effective_sport] if effective_sport else [],
+        )
+
+        # Debug line so you can SEE it working during ingestion
+        print(
+            f"[ENRICH] source={source} sport={effective_sport} dup={is_duplicate} "
+            f"tier={tier} urg={urgency:.2f} rank={rank_score:.2f} "
+            f"topics={topics} teams={teams} title={title[:80]!r}"
+        )
+
         db.add(ContentItem(
             source=source,
             sport=effective_sport,
@@ -118,7 +166,21 @@ def ingest_feed(db: Session, feed_url: str, source: str, sport: str):
             title=title[:300],
             url=url[:600],
             published_at=published_at,
-            snippet=snippet
+            snippet=snippet,
+
+            # NEW FIELDS
+            canonical_id=canonical_id,
+            dedupe_group_id=dedupe_group_id,
+            topics=topics,
+            urgency=urgency,
+            sentiment=None,
+            entities=entities,
+            summary=summary_text[:800] if summary_text else None,
+            key_points=None,
+            confidence=0.6,  # MVP constant (we can improve later)
+            source_tier=tier,
+            rank_score=rank_score,
+            is_duplicate=is_duplicate,
         ))
         inserted += 1
 

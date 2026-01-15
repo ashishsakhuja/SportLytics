@@ -10,4 +10,5 @@ httpx
 psycopg2
 feedparser
 python-dateutil
+sa
 
