@@ -27,18 +27,24 @@ Sports analytics and news aggregation platform
 ```bash
 git clone https://github.com/ashishsakhuja/SportLytics.git
 cd SportLytics
-cd backend
+cd backend 
+```
+
 
 2. **Start the API server**
 ```bash
 uvicorn app.main:app --reload
-### Prerequisites
+```
 
 The API will be available at:
+```bash
 http://127.0.0.1:8000
+```
 
 Interactive docs:
+```bash
 http://127.0.0.1:8000/docs
+```
 
 3. **Run a sample ingestion job**
 - python -m app.scripts.ingest_now
