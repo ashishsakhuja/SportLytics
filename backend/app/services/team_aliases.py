@@ -283,6 +283,8 @@ TEAM_ALIASES = {
     # Phoenix Suns
     "phoenix suns": "PHX",
     "suns": "PHX",
+    "suns'": "PHX",
+    "phoenix": "PHX",
 
     # Portland Trail Blazers
     "portland trail blazers": "POR",

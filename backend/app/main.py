@@ -4,7 +4,6 @@ from .routes.meta import router as meta_router
 from .routes.feed import router as feed_router
 
 
-
 app = FastAPI(title="SportsHub API")
 app.include_router(news_router)
 app.include_router(meta_router)
