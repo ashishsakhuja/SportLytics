@@ -130,7 +130,10 @@ def top_feed(
     topic: Optional[str] = Query(default=None, description="Filter by a topic tag (injury/trade/betting/etc.)"),
     team: Optional[str] = Query(default=None, description="Filter by team code (LAL, GSW, KC, etc.)"),
     include_cluster_sources: bool = Query(default=False, description="If true, include distinct source list per cluster"),
-    db: Session = Depends(get_db),
+    min_rank_score: float = Query(default=0.0, ge=0.0, description="Drop low-ranked items"),
+    min_source_tier: int = Query(default=0, ge=0, description="Drop sources below this tier"),
+
+        db: Session = Depends(get_db),
 ):
     # --- build base filters once so cluster_size matches the feed filters ---
     base_filters = []
@@ -152,6 +155,15 @@ def top_feed(
 
     if not include_duplicates and hasattr(ContentItem, "is_duplicate"):
         q = q.filter(ContentItem.is_duplicate == False)  # noqa: E712
+
+    # ----------------------------
+    # Query-time quality filters
+    # ----------------------------
+    if min_rank_score > 0 and hasattr(ContentItem, "rank_score"):
+        q = q.filter(ContentItem.rank_score.isnot(None), ContentItem.rank_score >= min_rank_score)
+
+    if min_source_tier > 0 and hasattr(ContentItem, "source_tier"):
+        q = q.filter(ContentItem.source_tier.isnot(None), ContentItem.source_tier >= min_source_tier)
 
     # Use correlated subquery for cluster size under the same filters
     group_key = _group_key()
@@ -196,7 +208,10 @@ def breaking_feed(
     min_urgency: float = Query(default=0.9, ge=0.0, le=1.0),
     include_duplicates: bool = Query(default=False),
     include_cluster_sources: bool = Query(default=False),
-    db: Session = Depends(get_db),
+    min_rank_score: float = Query(default=0.0, ge=0.0),
+    min_source_tier: int = Query(default=0, ge=0),
+
+        db: Session = Depends(get_db),
 ):
     base_filters = []
 
@@ -213,6 +228,15 @@ def breaking_feed(
 
     if not include_duplicates and hasattr(ContentItem, "is_duplicate"):
         q = q.filter(ContentItem.is_duplicate == False)  # noqa: E712
+
+    # ----------------------------
+    # Query-time quality filters
+    # ----------------------------
+    if min_rank_score > 0 and hasattr(ContentItem, "rank_score"):
+        q = q.filter(ContentItem.rank_score.isnot(None), ContentItem.rank_score >= min_rank_score)
+
+    if min_source_tier > 0 and hasattr(ContentItem, "source_tier"):
+        q = q.filter(ContentItem.source_tier.isnot(None), ContentItem.source_tier >= min_source_tier)
 
     group_key = _group_key()
     cluster_size_sq = _cluster_size_subquery(
@@ -271,3 +295,96 @@ def get_cluster(
 
     items = q.limit(limit).all()
     return {"items": [_to_card(x) for x in items]}
+
+@router.get("/item/{item_id}")
+def get_item(
+    item_id: int,
+    include_cluster_sources: bool = Query(default=True),
+    db: Session = Depends(get_db),
+):
+    item = db.query(ContentItem).filter(ContentItem.id == item_id).first()
+    if not item:
+        return {"error": "not_found"}
+
+    # cluster_size for this specific item
+    cluster_size = 1
+    if getattr(item, "dedupe_group_id", None):
+        cluster_size = (
+            db.query(func.count(ContentItem.id))
+            .filter(ContentItem.dedupe_group_id == item.dedupe_group_id)
+            .scalar()
+        ) or 1
+
+    cluster_sources = []
+    if include_cluster_sources and getattr(item, "dedupe_group_id", None):
+        cluster_sources = [
+            r[0]
+            for r in (
+                db.query(ContentItem.source)
+                .filter(ContentItem.dedupe_group_id == item.dedupe_group_id)
+                .distinct()
+                .all()
+            )
+        ]
+
+    return {"item": _to_card(item, cluster_size=cluster_size, cluster_sources=cluster_sources)}
+
+@router.get("/related")
+def related(
+    item_id: int = Query(..., ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    item = db.query(ContentItem).filter(ContentItem.id == item_id).first()
+    if not item:
+        return {"items": []}
+
+    sport = getattr(item, "sport", None)
+    topics = getattr(item, "topics", None) or []
+    teams = _teams_from_entities(getattr(item, "entities", None))
+
+    q = db.query(ContentItem)
+
+    if sport:
+        q = q.filter(ContentItem.sport == sport)
+
+    # Exclude itself
+    q = q.filter(ContentItem.id != item.id)
+
+    # Exclude same cluster (so “related” isn’t just duplicates)
+    if getattr(item, "dedupe_group_id", None):
+        q = q.filter(
+            sa.or_(
+                ContentItem.dedupe_group_id.is_(None),
+                ContentItem.dedupe_group_id != item.dedupe_group_id,
+            )
+        )
+
+    # Relatedness:
+    # - teams overlap OR topics overlap
+    clauses = []
+
+    if teams:
+        clauses.append(ContentItem.entities.contains({"teams": teams}))
+
+    if topics:
+        # any topic overlap (ARRAY overlap operator "&&")
+        clauses.append(ContentItem.topics.op("&&")(sa.cast(topics, sa.ARRAY(sa.Text))))
+
+    if clauses:
+        q = q.filter(sa.or_(*clauses))
+    else:
+        # fallback: if we have no teams/topics, just return recent in same sport
+        pass
+
+    # Rank best-first, then newest
+    if hasattr(ContentItem, "rank_score"):
+        q = q.order_by(ContentItem.rank_score.desc().nullslast(), ContentItem.published_at.desc())
+    else:
+        q = q.order_by(ContentItem.published_at.desc())
+
+    items = q.limit(limit).all()
+
+    # Optional: cluster_size for related items (cheap version: omit, or compute only when expanding)
+    return {"items": [_to_card(x) for x in items]}
+

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from ..models import ContentItem
 import re
 from typing import Optional
+from app.services.quality import quality_gate, normalize_title, normalize_snippet
 
 from app.services.enrich import (
     classify_topics,
@@ -121,6 +122,20 @@ def ingest_feed(db: Session, feed_url: str, source: str, sport: str):
             inferred = classify_sport(title, snippet, url)
             if inferred:
                 effective_sport = inferred
+
+        # ----------------------------
+        # Quality gate (Phase 3.3)
+        # ----------------------------
+        decision = quality_gate(title=title, url=url, snippet=snippet)
+        if not decision.ok:
+            # Optional: uncomment for debugging drops
+            # print(f"[DROP] reason={decision.reason} source={source} title={title[:80]!r}")
+            continue
+
+        # Normalize text before enrichment + storage
+        title = normalize_title(title)
+        snippet = normalize_snippet(snippet) or ""
+
 
         # ----------------------------
         # Enrichment + ranking (NEW)
