@@ -127,7 +127,8 @@ def ingest_feed(db: Session, feed_url: str, source: str, sport: str):
         # ----------------------------
         summary_text = (snippet or "").strip()
 
-        teams = extract_teams(title, summary_text)
+        teams = extract_teams(title, summary_text, url=url)
+        teams = [t.upper() for t in teams]
         topics = classify_topics(title, summary_text)
 
         dedupe_group_id = make_dedupe_group_id(title, teams=teams)
@@ -162,7 +163,7 @@ def ingest_feed(db: Session, feed_url: str, source: str, sport: str):
         db.add(ContentItem(
             source=source,
             sport=effective_sport,
-            team=None,
+            teams=teams,
             title=title[:300],
             url=url[:600],
             published_at=published_at,

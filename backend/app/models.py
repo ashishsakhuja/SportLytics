@@ -5,6 +5,8 @@ from .db import Base
 from sqlalchemy import String, DateTime, Integer
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
 class ContentItem(Base):
     __tablename__ = "content_items"
 
@@ -29,6 +31,7 @@ class ContentItem(Base):
     urgency = sa.Column(sa.Float, nullable=True)
     sentiment = sa.Column(sa.Float, nullable=True)
 
+    teams = sa.Column(postgresql.ARRAY(sa.Text()), nullable=True)
     entities = sa.Column(JSONB, nullable=True)  # {"teams":[...], "players":[...], "leagues":[...]}
     summary = sa.Column(sa.Text, nullable=True)
     key_points = sa.Column(ARRAY(sa.Text), nullable=True)

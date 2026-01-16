@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-
+from app.services.team_aliases import TEAM_ALIASES
 
 PUNCT_RE = re.compile(r"[^a-z0-9\s]")
 WS_RE = re.compile(r"\s+")
@@ -19,20 +19,9 @@ TOPIC_RULES = {
 }
 
 # Start simple. You can expand this later.
-TEAM_ALIASES = {
-    # NBA examples
-    "lakers": "LAL",
-    "celtics": "BOS",
-    "warriors": "GSW",
-    "knicks": "NYK",
-    "sixers": "PHI",
-    "76ers": "PHI",
-    # NFL examples
-    "chiefs": "KC",
-    "eagles": "PHI",
-    "cowboys": "DAL",
-    "49ers": "SF",
-}
+# backend/app/services/team_aliases.py
+TEAM_ALIASES = {k.lower(): v.upper() for k, v in TEAM_ALIASES.items()}
+
 
 
 def _utc_now() -> datetime:
@@ -70,18 +59,92 @@ def classify_topics(title: str, summary: str = "") -> List[str]:
     return topics
 
 
-def extract_teams(title: str, summary: str = "") -> List[str]:
-    text = f"{title} {summary}".lower()
+import html
+import re
+from typing import List, Optional
+
+# Optional: precompile alias patterns once for speed (recommended)
+# Build this once at import time.
+# TEAM_ALIASES: Dict[str, str]  # alias -> code (e.g., "los angeles lakers" -> "LAL")
+
+def _normalize_for_team_match(s: str) -> str:
+    if not s:
+        return ""
+    # Decode HTML entities (&amp;, &#8217;, etc.)
+    s = html.unescape(s)
+
+    # Normalize quotes/dashes that commonly appear in feeds
+    s = s.replace("\u2019", "'").replace("\u2018", "'")
+    s = s.replace("\u201c", '"').replace("\u201d", '"')
+    s = s.replace("\u2013", "-").replace("\u2014", "-")
+
+    s = s.lower()
+
+    # URLs: treat separators as spaces so slug tokens become matchable
+    # keep alphanumerics, replace everything else with spaces
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+
+    # collapse whitespace
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _alias_to_pattern(alias: str) -> re.Pattern:
+    """
+    Convert an alias like "l.a. lakers" or "san-francisco 49ers" into a robust regex
+    that matches regardless of punctuation/spacing (since we normalize to spaces).
+    """
+    a = _normalize_for_team_match(alias)
+
+    # Turn spaces into flexible whitespace
+    # Example: "san francisco 49ers" -> r"\bsan\s+francisco\s+49ers\b"
+    parts = [re.escape(p) for p in a.split() if p]
+    if not parts:
+        # should never happen, but avoid crashing
+        return re.compile(r"$^")
+    pat = r"\b" + r"\s+".join(parts) + r"\b"
+    return re.compile(pat)
+
+
+# Precompile patterns once (do this at module load)
+# NOTE: order matters; we preserve insertion order of TEAM_ALIASES
+_TEAM_PATTERNS: List[tuple[re.Pattern, str]] = [
+    (_alias_to_pattern(alias), abbr) for alias, abbr in TEAM_ALIASES.items()
+]
+
+
+def extract_teams(title: str, summary: str = "", url: Optional[str] = None) -> List[str]:
+    # Combine text sources
+    combined = f"{title or ''} {summary or ''} {url or ''}"
+    text = _normalize_for_team_match(combined)
+
     found: List[str] = []
-    for alias, abbr in TEAM_ALIASES.items():
-        if re.search(rf"\b{re.escape(alias)}\b", text):
+
+    # 1) Alias/name/nickname detection (most reliable)
+    for pat, abbr in _TEAM_PATTERNS:
+        if pat.search(text):
             found.append(abbr)
-    # dedupe preserving order
+
+    # 2) Direct code detection fallback (helps when feeds include abbreviations)
+    # Only add codes that exist anywhere in TEAM_ALIASES values (avoid random 3-letter words)
+    valid_codes = set(TEAM_ALIASES.values())
+
+    # After normalization, codes appear as tokens (e.g., "sf", "lal")
+    # We'll scan original (not stripped of caps) by using normalized text and uppercase.
+    for token in text.split():
+        if len(token) in (2, 3, 4):  # KC, SF, LAL, etc.
+            code = token.upper()
+            if code in valid_codes:
+                found.append(code)
+
+    # Deduplicate preserving order
     out: List[str] = []
     for t in found:
         if t not in out:
             out.append(t)
+
     return out
+
 
 
 def source_tier(source: str) -> int:
