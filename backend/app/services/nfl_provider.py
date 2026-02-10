@@ -152,12 +152,34 @@ def parse_scorestrip_xml(
 
 
 async def fetch_scorestrip(season: int, season_type: str, week: int) -> str:
-    """Fetch scorestrip XML for a given season_type/week."""
-    url = settings.NFL_SCORESTRIP_URL.format(season=season, season_type=season_type, week=week)
+    """
+    Fetch scorestrip XML for a given season_type/week.
+
+    Primary: static.nfl.com/ajax/scorestrip?... (week-specific)
+    Fallback: static.nfl.com/liveupdate/scorestrip/ss.xml (usually current week only)
+    """
+    season_type = season_type.upper().strip()
+
+    primary_url = settings.NFL_SCORESTRIP_URL.format(
+        season=season, season_type=season_type, week=week
+    )
+
     async with httpx.AsyncClient(timeout=20.0, headers={"User-Agent": "SportLytics/1.0"}) as client:
-        r = await client.get(url)
+        r = await client.get(primary_url)
+        if r.status_code == 200 and r.text:
+            return r.text
+
+        # If week-specific feed is gone, fall back to live feed (may not support historical weeks).
+        # This is still useful for in-season live ingestion mode.
+        fallback_url = getattr(settings, "NFL_SCORESTRIP_LIVE_URL", None)
+        if fallback_url:
+            r2 = await client.get(fallback_url)
+            r2.raise_for_status()
+            return r2.text
+
         r.raise_for_status()
         return r.text
+
 
 
 async def fetch_gtd_json(eid: str) -> Dict[str, Any]:

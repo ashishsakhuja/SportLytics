@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime
 
 from app.db import SessionLocal
-from app.services.nfl_provider import fetch_scorestrip, parse_scorestrip_xml
+from app.services.nfl_provider_espn import fetch_espn_scoreboard, parse_espn_scoreboard
 from app.services.nfl_ingest import upsert_game_from_row, write_standings_snapshot
 from app.services.nfl_standings import compute_nfl_standings_from_games
 
@@ -31,8 +31,13 @@ async def ingest_nfl_season(*, season: int, season_type: str) -> None:
     try:
         total_games = 0
         for week in weeks:
-            xml_text = await fetch_scorestrip(season, season_type, week)
-            game_rows = parse_scorestrip_xml(xml_text, season=season, season_type=season_type, week=week)
+            try:
+                payload = await fetch_espn_scoreboard(week=week, season=season, season_type=season_type)
+            except Exception as e:
+                print(f"[NFL] season={season} type={season_type} week={week}: fetch failed: {e}")
+                continue
+
+            game_rows = parse_espn_scoreboard(payload, season=season, season_type=season_type, week=week)
 
             for row in game_rows:
                 upsert_game_from_row(db, row=row)
@@ -40,6 +45,19 @@ async def ingest_nfl_season(*, season: int, season_type: str) -> None:
             db.commit()
             total_games += len(game_rows)
             print(f"[NFL] season={season} type={season_type} week={week}: upserted {len(game_rows)} games")
+
+        import sqlalchemy as sa
+        from app.models import Game
+
+        count = (
+            db.query(sa.func.count(Game.id))
+            .filter(Game.sport == "nfl", Game.season == season, Game.season_type == season_type)
+            .scalar()
+        )
+
+        if not count:
+            print("[NFL] No games ingested; skipping standings snapshot.")
+            return
 
         # standings snapshot from DB (final games only)
         standings = compute_nfl_standings_from_games(db, season=season, season_type=season_type)
