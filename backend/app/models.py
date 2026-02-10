@@ -61,6 +61,7 @@ class IngestRun(Base):
 
     error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
 
+
 class SocialPost(Base):
     __tablename__ = "social_posts"
 
@@ -85,3 +86,93 @@ class SocialPost(Base):
 
 Index("ux_social_platform_post_id", SocialPost.platform, SocialPost.post_id, unique=True)
 Index("ix_social_platform_created_at", SocialPost.platform, SocialPost.created_at)
+
+
+# -----------------------------
+# Sports Data Models (Dashboards)
+# -----------------------------
+
+from sqlalchemy import UniqueConstraint
+
+
+class Team(Base):
+    __tablename__ = "teams"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    sport: Mapped[str] = mapped_column(String(30), index=True)  # "nfl", "nba", ...
+    team_code: Mapped[str] = mapped_column(String(10), index=True)  # "KC", "BUF", ...
+    name: Mapped[str] = mapped_column(String(120))
+    city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    meta = sa.Column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("sport", "team_code", name="ux_team_sport_code"),
+    )
+
+
+class Game(Base):
+    __tablename__ = "games"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    sport: Mapped[str] = mapped_column(String(30), index=True)
+    season: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    season_type: Mapped[str | None] = mapped_column(String(10), index=True, nullable=True)  # PRE/REG/POST
+    week: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+
+    provider: Mapped[str] = mapped_column(String(30), default="nfl_scorestrip", index=True)
+    external_game_id: Mapped[str] = mapped_column(String(120), index=True)
+
+    game_date: Mapped[datetime | None] = mapped_column(DateTime, index=True, nullable=True)
+
+    home_team_code: Mapped[str] = mapped_column(String(10), index=True)
+    away_team_code: Mapped[str] = mapped_column(String(10), index=True)
+
+    home_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    away_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    status: Mapped[str | None] = mapped_column(String(30), index=True, nullable=True)  # pre/live/final
+    phase: Mapped[str | None] = mapped_column(String(10), nullable=True)  # raw q value from feed
+
+    source_url: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    raw = sa.Column(JSONB, nullable=True)
+
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("sport", "provider", "external_game_id", name="ux_game_sport_provider_ext"),
+        Index("ix_games_sport_date", "sport", "game_date"),
+    )
+
+
+class StandingsSnapshot(Base):
+    __tablename__ = "standings_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    sport: Mapped[str] = mapped_column(String(30), index=True)
+    season: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    season_type: Mapped[str | None] = mapped_column(String(10), index=True, nullable=True)
+
+    as_of: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    team_code: Mapped[str] = mapped_column(String(10), index=True)
+    conference: Mapped[str | None] = mapped_column(String(10), index=True, nullable=True)  # AFC/NFC
+    division: Mapped[str | None] = mapped_column(String(20), index=True, nullable=True)  # East/West/etc
+
+    wins: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    losses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ties: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    source_url: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    raw = sa.Column(JSONB, nullable=True)
+
+    __table_args__ = (
+        Index("ix_standings_sport_season_asof", "sport", "season", "as_of"),
+        Index("ix_standings_sport_team_asof", "sport", "team_code", "as_of"),
+    )
