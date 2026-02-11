@@ -10,10 +10,12 @@ class Settings(BaseSettings):
     ESPN_NFL_SCOREBOARD_URL: str = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
     # Optional: richer per-game details (JSON)
     NFL_GTD_URL: str = "https://static.nfl.com/liveupdate/game-center/{eid}/{eid}_gtd.json"
+
     ESPN_NBA_SCOREBOARD_URL: str = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
     ESPN_NBA_TEAMS_URL: str = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams"
 
-
+    ESPN_MLB_SCOREBOARD_URL: str = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
+    ESPN_MLB_TEAMS_URL: str = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams"
 
 
 settings = Settings()
