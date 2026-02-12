@@ -17,5 +17,9 @@ class Settings(BaseSettings):
     ESPN_MLB_SCOREBOARD_URL: str = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
     ESPN_MLB_TEAMS_URL: str = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams"
 
+    ESPN_NHL_SCOREBOARD_URL: str = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+    ESPN_NHL_TEAMS_URL: str = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams"
+
+
 
 settings = Settings()
