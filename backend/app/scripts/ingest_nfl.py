@@ -65,7 +65,7 @@ async def ingest_nfl_season(*, season: int, season_type: str) -> None:
             empty_weeks = 0
 
             for row in game_rows:
-                upsert_game_from_row(db, row=row)
+                upsert_game_from_row(db, row=row, provider="espn_nfl")
 
             db.commit()
             total_games += len(game_rows)

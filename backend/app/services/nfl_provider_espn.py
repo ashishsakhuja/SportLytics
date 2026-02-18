@@ -98,7 +98,9 @@ def parse_espn_scoreboard(
     out: List[NFLGameRow] = []
 
     for ev in events:
-        eid = str(ev.get("id") or "")
+        raw_id = str(ev.get("id") or "")
+        eid = f"{season}-{raw_id}"
+
         if not eid:
             continue
 
