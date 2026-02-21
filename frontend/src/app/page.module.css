@@ -1,0 +1,47 @@
+/* Animated blob motion */
+@keyframes blob {
+  0% {
+    transform: translate(0px, 0px) scale(1);
+  }
+  33% {
+    transform: translate(30px, -40px) scale(1.05);
+  }
+  66% {
+    transform: translate(-20px, 35px) scale(0.98);
+  }
+  100% {
+    transform: translate(0px, 0px) scale(1);
+  }
+}
+
+.blob {
+  animation: blob 12s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* Give each blob a different delay */
+.delay2s {
+  animation-delay: 2s;
+}
+.delay4s {
+  animation-delay: 4s;
+}
+
+/* Grain shift */
+@keyframes grainShift {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-40px, 25px, 0);
+  }
+}
+
+.grain {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.14) 1px, transparent 1px),
+    radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 120px 120px, 180px 180px;
+  background-position: 0 0, 60px 60px;
+  animation: grainShift 8s linear infinite;
+  will-change: transform;
+}
