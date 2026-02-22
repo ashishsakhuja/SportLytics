@@ -10,6 +10,75 @@ body {
   color: var(--foreground);
 }
 
+/* === SportLytics plasma border === */
+@keyframes sl-plasma-shift {
+  0%   { background-position: 0% 50%; filter: hue-rotate(0deg); }
+  50%  { background-position: 100% 50%; filter: hue-rotate(35deg); }
+  100% { background-position: 0% 50%; filter: hue-rotate(0deg); }
+}
+
+@keyframes sl-plasma-wobble {
+  0%, 100% { transform: translate3d(0,0,0) scale(1); }
+  50%      { transform: translate3d(0,0,0) scale(1.02); }
+}
+
+.sl-plasma-card {
+  position: relative;
+  border-radius: 1.25rem; /* match rounded-2xl */
+  overflow: hidden;
+}
+
+/* outer animated outline */
+.sl-plasma-card::before {
+  content: "";
+  position: absolute;
+  inset: -2px;                 /* thickness */
+  border-radius: inherit;
+  background: linear-gradient(
+    120deg,
+    rgba(255, 77, 77, 0.55),
+    rgba(255, 169, 77, 0.45),
+    rgba(180, 77, 255, 0.45),
+    rgba(77, 189, 255, 0.40),
+    rgba(255, 77, 77, 0.55)
+  );
+  background-size: 300% 300%;
+  animation: sl-plasma-shift 10s ease-in-out infinite,
+             sl-plasma-wobble 6s ease-in-out infinite;
+  filter: blur(6px);
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+/* inner mask to keep border only */
+.sl-plasma-card::after {
+  content: "";
+  position: absolute;
+  inset: 1px;                  /* border inner gap */
+  border-radius: calc(1.25rem - 1px);
+  background: rgba(0, 0, 0, 0.65); /* panel fill */
+  pointer-events: none;
+}
+
+/* content wrapper stays above */
+.sl-plasma-inner {
+  position: relative;
+  z-index: 1;
+}
+
+/* hover: slightly more energy */
+.sl-plasma-card:hover::before {
+  opacity: 0.85;
+  filter: blur(7px);
+}
+
+/* reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .sl-plasma-card::before {
+    animation: none;
+  }
+}
+
 /* Grain background utility */
 @layer utilities {
   .grain {
