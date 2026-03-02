@@ -60,6 +60,9 @@ const SPORT_LABEL: Record<string, string> = {
   nascar: "NASCAR",
 };
 
+// IMPORTANT: only these have sport-specific dashboard pages right now
+const SUPPORTED_SPORT_PAGES = new Set(["nfl", "nba", "mlb", "nhl"]);
+
 const STOPWORDS = new Set([
   "the",
   "a",
@@ -163,7 +166,6 @@ function extractKeywords(text: string) {
 }
 
 export default function GeneralDashboard() {
-  const [sportFilter, setSportFilter] = useState<string>("top");
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -197,21 +199,17 @@ export default function GeneralDashboard() {
   }, []);
 
   const filteredNews = useMemo(() => {
-    const sport = sportFilter === "top" ? null : sportFilter;
     const query = q.trim().toLowerCase();
-
     return news.filter((n) => {
-      if (sport && n.sport !== sport) return false;
       if (!query) return true;
       const hay = `${n.title} ${n.snippet ?? ""}`.toLowerCase();
       return hay.includes(query);
     });
-  }, [news, sportFilter, q]);
+  }, [news, q]);
 
   const kpis = useMemo(() => {
     const now = Date.now();
-    const sport = sportFilter === "top" ? null : sportFilter;
-    const items = news.filter((n) => (sport ? n.sport === sport : true));
+    const items = news;
 
     let last24 = 0;
     let last7d = 0;
@@ -236,17 +234,14 @@ export default function GeneralDashboard() {
       last7d,
       velocity,
       latest,
-      spark24h: bucketSeries(items, 24, sport),
-      spark72h: bucketSeries(items, 72, sport),
+      spark24h: bucketSeries(items, 24, null),
+      spark72h: bucketSeries(items, 72, null),
     };
-  }, [news, sportFilter]);
+  }, [news]);
 
   const trends = useMemo(() => {
-    const sport = sportFilter === "top" ? null : sportFilter;
-    const items = news.filter((n) => (sport ? n.sport === sport : true));
-
     const now = Date.now();
-    const recent = items.filter((n) => {
+    const recent = news.filter((n) => {
       const d = parseISO(n.published_at);
       if (!d) return false;
       return now - d.getTime() <= 72 * 3600 * 1000;
@@ -263,7 +258,7 @@ export default function GeneralDashboard() {
       return d ? now - d.getTime() <= 24 * 3600 * 1000 : false;
     });
 
-    const sorted = [...counts.entries()]
+    return [...counts.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 12)
       .map(([term, count]) => {
@@ -275,9 +270,7 @@ export default function GeneralDashboard() {
         const momentum = c24 / Math.max(1, count);
         return { term, count, c24, momentum };
       });
-
-    return sorted;
-  }, [news, sportFilter]);
+  }, [news]);
 
   const sportsCoverage = useMemo(() => {
     const rows = metaSports?.sports ?? [];
@@ -292,6 +285,8 @@ export default function GeneralDashboard() {
       return a.key.localeCompare(b.key);
     });
   }, [metaSports]);
+
+  const lastRun = health?.ingestion?.last_run ?? null;
 
   if (loading) {
     return (
@@ -324,8 +319,6 @@ export default function GeneralDashboard() {
     );
   }
 
-  const lastRun = health?.ingestion?.last_run ?? null;
-
   return (
     <main className="min-h-screen bg-black text-white">
       {/* Top bar */}
@@ -348,7 +341,9 @@ export default function GeneralDashboard() {
           <div className="flex items-center gap-3">
             <div className="hidden sm:block text-xs text-white/60">
               DB:{" "}
-              <span className={health?.db?.ok ? "text-emerald-300" : "text-red-300"}>
+              <span
+                className={health?.db?.ok ? "text-emerald-300" : "text-red-300"}
+              >
                 {health?.db?.ok ? "ok" : "degraded"}
               </span>
               {health?.content_items?.latest_published_at ? (
@@ -356,7 +351,9 @@ export default function GeneralDashboard() {
                   {" "}
                   • latest item{" "}
                   <span className="text-white/80">
-                    {agoLabel(new Date(health.content_items.latest_published_at))}
+                    {agoLabel(
+                      new Date(health.content_items.latest_published_at)
+                    )}
                   </span>
                 </>
               ) : null}
@@ -376,21 +373,24 @@ export default function GeneralDashboard() {
         {/* Controls */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
-            {["top", ...sportsCoverage.map((s) => s.key)]
+            {/* "All" stays on general dashboard */}
+            <span className="rounded-full px-4 py-2 text-xs font-semibold border border-white/35 bg-white/20">
+              All
+            </span>
+
+            {/* Sport chips navigate ONLY for supported sport pages */}
+            {sportsCoverage
+              .map((s) => s.key)
               .filter((v, i, a) => a.indexOf(v) === i)
+              .filter((key) => SUPPORTED_SPORT_PAGES.has(key))
               .map((key) => (
-                <button
+                <Link
                   key={key}
-                  onClick={() => setSportFilter(key)}
-                  className={[
-                    "rounded-full px-4 py-2 text-xs font-semibold border transition",
-                    sportFilter === key
-                      ? "border-white/35 bg-white/20"
-                      : "border-white/10 bg-white/5 hover:bg-white/10",
-                  ].join(" ")}
+                  href={`/dashboard/${key}`}
+                  className="rounded-full px-4 py-2 text-xs font-semibold border border-white/10 bg-white/5 hover:bg-white/10 transition"
                 >
-                  {SPORT_LABEL[key] ?? key.toUpperCase()}
-                </button>
+                  {SPORT_LABEL[key] ?? key.toUpperCase()} →
+                </Link>
               ))}
           </div>
 
@@ -544,34 +544,41 @@ export default function GeneralDashboard() {
                 </div>
 
                 <div className="mt-4 space-y-2">
-                  {sportsCoverage.length === 0 ? (
-                    <div className="text-sm text-white/60">No sports found.</div>
+                  {sportsCoverage.filter((s) =>
+                    SUPPORTED_SPORT_PAGES.has(s.key)
+                  ).length === 0 ? (
+                    <div className="text-sm text-white/60">
+                      No supported sport pages available.
+                    </div>
                   ) : (
-                    sportsCoverage.map((s) => {
-                      const last = s.last_published_at
-                        ? agoLabel(new Date(s.last_published_at))
-                        : "—";
-                      return (
-                        <div
-                          key={s.key}
-                          className="rounded-xl border border-white/10 bg-black/25 p-3"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-sm font-semibold">
-                              {s.label ??
-                                SPORT_LABEL[s.key] ??
-                                s.key.toUpperCase()}
+                    sportsCoverage
+                      .filter((s) => SUPPORTED_SPORT_PAGES.has(s.key))
+                      .map((s) => {
+                        const last = s.last_published_at
+                          ? agoLabel(new Date(s.last_published_at))
+                          : "—";
+                        return (
+                          <Link
+                            key={s.key}
+                            href={`/dashboard/${s.key}`}
+                            className="rounded-xl border border-white/10 bg-black/25 p-3"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-sm font-semibold">
+                                {s.label ??
+                                  SPORT_LABEL[s.key] ??
+                                  s.key.toUpperCase()}
+                              </div>
+                              <div className="text-xs text-white/70">
+                                {s.count.toLocaleString()} items
+                              </div>
                             </div>
-                            <div className="text-xs text-white/70">
-                              {s.count.toLocaleString()} items
+                            <div className="mt-1 text-[11px] text-white/60">
+                              last publish: {last}
                             </div>
-                          </div>
-                          <div className="mt-1 text-[11px] text-white/60">
-                            last publish: {last}
-                          </div>
-                        </div>
-                      );
-                    })
+                          </Link>
+                        );
+                      })
                   )}
                 </div>
               </div>
