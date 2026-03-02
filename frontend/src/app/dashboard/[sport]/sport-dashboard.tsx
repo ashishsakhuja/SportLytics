@@ -165,6 +165,16 @@ type SosResp = {
   rows: SosRow[];
 };
 
+type NewsItem = {
+  id: number;
+  source: string;
+  sport: string;
+  title: string;
+  url: string;
+  published_at: string; // ISO
+  snippet?: string | null;
+};
+
 function niceTeamLabel(r: {
   team_code: string;
   name?: string | null;
@@ -209,10 +219,25 @@ function histogram(values: number[], binSize: number) {
 
   return Object.entries(bins).map(([range, count]) => ({
     range,
-    // shorter, readable tick label like "-21–-14"
     label: range.replace(" to ", "–").replace(/\s+/g, ""),
     count,
   }));
+}
+
+function parseISO(s: string) {
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function agoLabel(dt: Date) {
+  const sec = Math.floor((Date.now() - dt.getTime()) / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 48) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  return `${day}d ago`;
 }
 
 function closeGamesBars(
@@ -267,6 +292,8 @@ export default function SportDashboard({ sport }: { sport: string }) {
 
   const [sos, setSos] = useState<SosResp | null>(null);
 
+  const [news, setNews] = useState<NewsItem[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -282,7 +309,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
       setLoading(true);
       setErr(null);
       try {
-        const [t, st, ts] = await Promise.all([
+        const [t, st, ts, nws] = await Promise.all([
           apiGet<TeamsResp>(`/analytics/teams?sport=${s}`),
           apiGet<StandingsResp>(
             `/analytics/league/${s}/standings?season=${season}&season_type=${seasonType}`
@@ -290,13 +317,14 @@ export default function SportDashboard({ sport }: { sport: string }) {
           apiGet<TeamSummaryResp>(
             `/analytics/league/${s}/team-summary?season=${season}&season_type=${seasonType}`
           ),
+          apiGet<NewsItem[]>(`/news?sport=${s}&limit=60`),
         ]);
 
         setTeams(t);
         setStandings(st);
         setSummary(ts);
+        setNews(nws);
 
-        // Default team selection: keep current, else BUF if exists, else first
         const codes = (t.teams ?? []).map((x) => x.team_code);
         const nextTeam =
           team ||
@@ -304,7 +332,6 @@ export default function SportDashboard({ sport }: { sport: string }) {
           "";
         setTeam(nextTeam);
 
-        // League distribution + recent scoring trend (best effort)
         try {
           const dist = await apiGet<ScoringDistributionResp>(
             `/analytics/league/${s}/scoring/distribution?season=${season}&season_type=${seasonType}&bins=14`
@@ -444,7 +471,6 @@ export default function SportDashboard({ sport }: { sport: string }) {
     }));
   }, [sos]);
 
-  // Rolling averages
   const rollingSeries = useMemo(() => {
     if (formSeries.length === 0) return [];
     const pf = formSeries.map((d) => d.sf);
@@ -459,7 +485,6 @@ export default function SportDashboard({ sport }: { sport: string }) {
     }));
   }, [formSeries]);
 
-  // Team margin histogram (bin size ~TD)
   const marginHistogram = useMemo(() => {
     if (formSeries.length === 0) return [];
     const margins = formSeries.map((d) => d.margin);
@@ -511,7 +536,6 @@ export default function SportDashboard({ sport }: { sport: string }) {
               inputMode="numeric"
             />
 
-            {/* Only REG and POST */}
             <select
               value={seasonType}
               onChange={(e) => setSeasonType(e.target.value)}
@@ -544,7 +568,10 @@ export default function SportDashboard({ sport }: { sport: string }) {
         </div>
       </header>
 
-      <div className="mx-auto max-w-6xl px-6 py-8">
+      {/* LAYOUT CHANGE:
+          Full-width container so the News sidebar can sit near the left edge.
+          Sidebar fixed-ish width; main content keeps your 2-column plot grid. */}
+      <div className="w-full px-6 py-8">
         {loading ? (
           <div className="text-white/70">Loading…</div>
         ) : err ? (
@@ -553,244 +580,158 @@ export default function SportDashboard({ sport }: { sport: string }) {
             <div className="mt-1 text-sm text-white/80">{err}</div>
           </div>
         ) : (
-          <>
-            {/* KEY LAYOUT FIX:
-                At lg+, keep a persistent Left column (7) + Right column (5).
-                This prevents the "blank black gap" under shorter right cards when the left card is taller. */}
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-              {/* LEFT COLUMN */}
-              <div className="lg:col-span-7 flex flex-col gap-6">
-                {/* Offense vs Defense */}
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-base font-semibold">
-                      Offense vs Defense
-                    </h2>
-                    <div className="text-xs text-white/60">avg per game</div>
+          <div className="flex gap-6">
+            {/* LEFT SIDEBAR: News (narrower + edge-ish) */}
+            <aside className="hidden xl:block w-[340px] shrink-0">
+              <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-semibold">
+                    Latest {SPORT_LABEL[s] ?? s.toUpperCase()} Headlines
+                  </h2>
+                  <div className="text-xs text-white/60">
+                    Showing {Math.min(12, news.length)} of {news.length}
                   </div>
-                  <div className="mt-4 h-[320px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ScatterChart
-                        margin={{ top: 10, right: 20, bottom: 10, left: 0 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                        <XAxis
-                          type="number"
-                          dataKey="avg_pf"
-                          name="For"
-                          tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
-                          axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                        />
-                        <YAxis
-                          type="number"
-                          dataKey="avg_pa"
-                          name="Against"
-                          tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
-                          axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                        />
-                        <Tooltip
-                          cursor={{ stroke: "rgba(255,255,255,0.15)" }}
-                          contentStyle={{
-                            background: "rgba(0,0,0,0.9)",
-                            border: "1px solid rgba(255,255,255,0.15)",
-                            borderRadius: 12,
-                            color: "white",
-                          }}
-                          formatter={(v: any, k: any) => [v, k]}
-                          labelFormatter={(_, payload: any) =>
-                            payload?.[0]?.payload?.label ?? ""
-                          }
-                        />
-                        <Scatter
-                          name="Teams"
-                          data={scatterData}
-                          fill="rgba(255,255,255,0.7)"
-                        />
-                      </ScatterChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="mt-3 text-xs text-white/60">
-                    Tip: bottom-right = elite (high for, low against).
-                  </div>
-                </section>
+                </div>
 
-                {/* Rolling Averages */}
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-base font-semibold">
-                      Rolling Averages (5-game)
-                    </h2>
-                    <div className="text-xs text-white/60">{team}</div>
-                  </div>
-                  <div className="mt-4 h-[280px]">
-                    {rollingSeries.length === 0 ? (
-                      <div className="text-sm text-white/60">
-                        No games found for rolling averages.
-                      </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart
-                          data={rollingSeries}
-                          margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                          <XAxis
-                            dataKey="idx"
-                            tick={{
-                              fill: "rgba(255,255,255,0.75)",
-                              fontSize: 11,
-                            }}
-                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          />
-                          <YAxis
-                            tick={{
-                              fill: "rgba(255,255,255,0.75)",
-                              fontSize: 12,
-                            }}
-                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              background: "rgba(0,0,0,0.9)",
-                              border: "1px solid rgba(255,255,255,0.15)",
-                              borderRadius: 12,
-                              color: "white",
-                            }}
-                            labelFormatter={(label: any) => `Game ${label}`}
-                          />
-                          <Legend
-                            verticalAlign="top"
-                            height={20}
-                            iconSize={8}
-                            wrapperStyle={{
-                              fontSize: 12,
-                              color: "rgba(255,255,255,0.75)",
-                            }}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="pf_roll5"
-                            name="PF (roll5)"
-                            stroke="rgba(255,255,255,0.85)"
-                            dot={false}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="pa_roll5"
-                            name="PA (roll5)"
-                            stroke="rgba(255,255,255,0.45)"
-                            dot={false}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                </section>
-
-                {/* Standings */}
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-base font-semibold">Standings</h2>
-                    <div className="text-xs text-white/60">
-                      {standings?.season} {standings?.season_type}
+                <div className="mt-4 space-y-3">
+                  {news.length === 0 ? (
+                    <div className="text-sm text-white/60">
+                      No recent articles found.
                     </div>
-                  </div>
-                  <div className="mt-4 overflow-auto">
-                    <table className="w-full text-sm">
-                      <thead className="text-white/60">
-                        <tr className="border-b border-white/10">
-                          <th className="py-2 text-left font-semibold">Team</th>
-                          <th className="py-2 text-right font-semibold">
-                            W-L-T
-                          </th>
-                          <th className="py-2 text-right font-semibold">PF</th>
-                          <th className="py-2 text-right font-semibold">PA</th>
-                          <th className="py-2 text-right font-semibold">Diff</th>
-                          <th className="py-2 text-right font-semibold">Win%</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(standings?.standings ?? []).slice(0, 16).map((r) => (
-                          <tr
-                            key={r.team_code}
-                            className="border-b border-white/5 hover:bg-white/5"
-                          >
-                            <td className="py-2 pr-2">
-                              <div className="font-semibold">{r.team_code}</div>
-                              <div className="text-[11px] text-white/60">
-                                {niceTeamLabel(r)}
+                  ) : (
+                    news.slice(0, 12).map((n) => {
+                      const d = parseISO(n.published_at);
+                      return (
+                        <a
+                          key={n.id}
+                          href={n.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="group block rounded-xl border border-white/10 bg-black/30 p-4 hover:bg-black/40"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-semibold leading-snug group-hover:text-white">
+                                {n.title}
                               </div>
-                            </td>
-                            <td className="py-2 text-right tabular-nums">
-                              {r.w}-{r.l}-{r.t}
-                            </td>
-                            <td className="py-2 text-right tabular-nums">
-                              {r.pf}
-                            </td>
-                            <td className="py-2 text-right tabular-nums">
-                              {r.pa}
-                            </td>
-                            <td className="py-2 text-right tabular-nums">
-                              {r.diff}
-                            </td>
-                            <td className="py-2 text-right tabular-nums">
-                              {(r.win_pct * 100).toFixed(1)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="mt-3 text-xs text-white/60">
-                    (Top 16 shown.) Next: division/conference grouping + playoff
-                    cutlines.
-                  </div>
-                </section>
+                              {n.snippet ? (
+                                <div className="mt-1 text-xs text-white/70 line-clamp-2">
+                                  {n.snippet}
+                                </div>
+                              ) : null}
+                              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-white/60">
+                                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">
+                                  {n.source}
+                                </span>
+                                <span>{d ? agoLabel(d) : n.published_at}</span>
+                              </div>
+                            </div>
+                            <span className="text-white/50 group-hover:text-white/80">
+                              ↗
+                            </span>
+                          </div>
+                        </a>
+                      );
+                    })
+                  )}
+                </div>
+              </section>
+            </aside>
 
-                {/* League Scoring Trend */}
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-base font-semibold">
-                      League Scoring Trend
-                    </h2>
-                    <div className="text-xs text-white/60">
-                      avg total per game (recent)
-                    </div>
-                  </div>
-                  <div className="mt-4 h-[280px]">
-                    {scoringSeries.length === 0 ? (
-                      <div className="text-sm text-white/60">
-                        No scoring time series available.
+            {/* MAIN CONTENT: keep your 2 plot columns grid */}
+            <div className="flex-1">
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+                {/* LEFT PLOTS COLUMN */}
+                <div className="lg:col-span-7 flex flex-col gap-6">
+                  {/* On smaller screens, show News at top (only when sidebar hidden) */}
+                  <section className="xl:hidden rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-base font-semibold">
+                        Latest {SPORT_LABEL[s] ?? s.toUpperCase()} Headlines
+                      </h2>
+                      <div className="text-xs text-white/60">
+                        Showing {Math.min(6, news.length)} of {news.length}
                       </div>
-                    ) : (
+                    </div>
+
+                    <div className="mt-4 space-y-3">
+                      {news.length === 0 ? (
+                        <div className="text-sm text-white/60">
+                          No recent articles found.
+                        </div>
+                      ) : (
+                        news.slice(0, 6).map((n) => {
+                          const d = parseISO(n.published_at);
+                          return (
+                            <a
+                              key={n.id}
+                              href={n.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="group block rounded-xl border border-white/10 bg-black/30 p-4 hover:bg-black/40"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-sm font-semibold leading-snug group-hover:text-white">
+                                    {n.title}
+                                  </div>
+                                  {n.snippet ? (
+                                    <div className="mt-1 text-xs text-white/70 line-clamp-2">
+                                      {n.snippet}
+                                    </div>
+                                  ) : null}
+                                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-white/60">
+                                    <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">
+                                      {n.source}
+                                    </span>
+                                    <span>
+                                      {d ? agoLabel(d) : n.published_at}
+                                    </span>
+                                  </div>
+                                </div>
+                                <span className="text-white/50 group-hover:text-white/80">
+                                  ↗
+                                </span>
+                              </div>
+                            </a>
+                          );
+                        })
+                      )}
+                    </div>
+                  </section>
+
+                  {/* Offense vs Defense */}
+                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-base font-semibold">
+                        Offense vs Defense
+                      </h2>
+                      <div className="text-xs text-white/60">avg per game</div>
+                    </div>
+                    <div className="mt-4 h-[320px]">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart
-                          data={scoringSeries}
-                          margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
+                        <ScatterChart
+                          margin={{ top: 10, right: 20, bottom: 10, left: 0 }}
                         >
                           <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                           <XAxis
-                            dataKey="x"
-                            tick={{
-                              fill: "rgba(255,255,255,0.75)",
-                              fontSize: 11,
-                            }}
+                            type="number"
+                            dataKey="avg_pf"
+                            name="For"
+                            tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
                             axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
                             tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
                           />
                           <YAxis
-                            tick={{
-                              fill: "rgba(255,255,255,0.75)",
-                              fontSize: 12,
-                            }}
+                            type="number"
+                            dataKey="avg_pa"
+                            name="Against"
+                            tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
                             axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
                             tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
                           />
                           <Tooltip
+                            cursor={{ stroke: "rgba(255,255,255,0.15)" }}
                             contentStyle={{
                               background: "rgba(0,0,0,0.9)",
                               border: "1px solid rgba(255,255,255,0.15)",
@@ -798,122 +739,458 @@ export default function SportDashboard({ sport }: { sport: string }) {
                               color: "white",
                             }}
                             formatter={(v: any, k: any) => [v, k]}
+                            labelFormatter={(_, payload: any) =>
+                              payload?.[0]?.payload?.label ?? ""
+                            }
                           />
-                          <Legend
-                            verticalAlign="top"
-                            height={20}
-                            iconSize={8}
-                            wrapperStyle={{
-                              fontSize: 12,
-                              color: "rgba(255,255,255,0.75)",
-                            }}
+                          <Scatter
+                            name="Teams"
+                            data={scatterData}
+                            fill="rgba(255,255,255,0.7)"
                           />
-                          <Line
-                            type="monotone"
-                            dataKey="avg_total"
-                            name="Avg total"
-                            stroke="rgba(255,255,255,0.8)"
-                            dot={false}
-                          />
-                        </LineChart>
+                        </ScatterChart>
                       </ResponsiveContainer>
-                    )}
-                  </div>
-                </section>
-              </div>
-
-              {/* RIGHT COLUMN */}
-              <div className="lg:col-span-5 flex flex-col gap-6">
-                {/* Recent Form */}
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-base font-semibold">{team} Recent Form</h2>
-                    <div className="text-xs text-white/60">
-                      last {form?.last ?? 0}
                     </div>
-                  </div>
-                  <div className="mt-4 h-[320px]">
-                    {formSeries.length === 0 ? (
-                      <div className="text-sm text-white/60">
-                        No games found for this team/season.
-                      </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart
-                          data={formSeries}
-                          margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                          <XAxis
-                            dataKey="idx"
-                            tick={{
-                              fill: "rgba(255,255,255,0.75)",
-                              fontSize: 11,
-                            }}
-                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          />
-                          <YAxis
-                            tick={{
-                              fill: "rgba(255,255,255,0.75)",
-                              fontSize: 12,
-                            }}
-                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              background: "rgba(0,0,0,0.9)",
-                              border: "1px solid rgba(255,255,255,0.15)",
-                              borderRadius: 12,
-                              color: "white",
-                            }}
-                            labelFormatter={(label: any) => `Game ${label}`}
-                          />
-                          <Legend
-                            verticalAlign="top"
-                            height={20}
-                            iconSize={8}
-                            wrapperStyle={{
-                              fontSize: 12,
-                              color: "rgba(255,255,255,0.75)",
-                            }}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="sf"
-                            name="For"
-                            stroke="rgba(255,255,255,0.85)"
-                            dot={false}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="sa"
-                            name="Against"
-                            stroke="rgba(255,255,255,0.45)"
-                            dot={false}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                </section>
+                    <div className="mt-3 text-xs text-white/60">
+                      Tip: bottom-right = elite (high for, low against).
+                    </div>
+                  </section>
 
-                {/* Home vs Away Splits */}
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-base font-semibold">
-                      Home vs Away Splits
-                    </h2>
-                    <div className="text-xs text-white/60">{team}</div>
-                  </div>
-                  <div className="mt-4 h-[280px]">
-                    {splitBars.length === 0 ? (
-                      <div className="text-sm text-white/60">No split data.</div>
-                    ) : (
+                  {/* Rolling Averages */}
+                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-base font-semibold">
+                        Rolling Averages (5-game)
+                      </h2>
+                      <div className="text-xs text-white/60">{team}</div>
+                    </div>
+                    <div className="mt-4 h-[280px]">
+                      {rollingSeries.length === 0 ? (
+                        <div className="text-sm text-white/60">
+                          No games found for rolling averages.
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart
+                            data={rollingSeries}
+                            margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                            <XAxis
+                              dataKey="idx"
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 11,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            />
+                            <YAxis
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 12,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                background: "rgba(0,0,0,0.9)",
+                                border: "1px solid rgba(255,255,255,0.15)",
+                                borderRadius: 12,
+                                color: "white",
+                              }}
+                              labelFormatter={(label: any) => `Game ${label}`}
+                            />
+                            <Legend
+                              verticalAlign="top"
+                              height={20}
+                              iconSize={8}
+                              wrapperStyle={{
+                                fontSize: 12,
+                                color: "rgba(255,255,255,0.75)",
+                              }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="pf_roll5"
+                              name="PF (roll5)"
+                              stroke="rgba(255,255,255,0.85)"
+                              dot={false}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="pa_roll5"
+                              name="PA (roll5)"
+                              stroke="rgba(255,255,255,0.45)"
+                              dot={false}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  </section>
+
+                  {/* Standings */}
+                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-base font-semibold">Standings</h2>
+                      <div className="text-xs text-white/60">
+                        {standings?.season} {standings?.season_type}
+                      </div>
+                    </div>
+                    <div className="mt-4 overflow-auto">
+                      <table className="w-full text-sm">
+                        <thead className="text-white/60">
+                          <tr className="border-b border-white/10">
+                            <th className="py-2 text-left font-semibold">Team</th>
+                            <th className="py-2 text-right font-semibold">
+                              W-L-T
+                            </th>
+                            <th className="py-2 text-right font-semibold">PF</th>
+                            <th className="py-2 text-right font-semibold">PA</th>
+                            <th className="py-2 text-right font-semibold">Diff</th>
+                            <th className="py-2 text-right font-semibold">Win%</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(standings?.standings ?? []).slice(0, 16).map((r) => (
+                            <tr
+                              key={r.team_code}
+                              className="border-b border-white/5 hover:bg-white/5"
+                            >
+                              <td className="py-2 pr-2">
+                                <div className="font-semibold">{r.team_code}</div>
+                                <div className="text-[11px] text-white/60">
+                                  {niceTeamLabel(r)}
+                                </div>
+                              </td>
+                              <td className="py-2 text-right tabular-nums">
+                                {r.w}-{r.l}-{r.t}
+                              </td>
+                              <td className="py-2 text-right tabular-nums">
+                                {r.pf}
+                              </td>
+                              <td className="py-2 text-right tabular-nums">
+                                {r.pa}
+                              </td>
+                              <td className="py-2 text-right tabular-nums">
+                                {r.diff}
+                              </td>
+                              <td className="py-2 text-right tabular-nums">
+                                {(r.win_pct * 100).toFixed(1)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="mt-3 text-xs text-white/60">
+                      (Top 16 shown.) Next: division/conference grouping + playoff
+                      cutlines.
+                    </div>
+                  </section>
+
+                  {/* League Scoring Trend */}
+                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-base font-semibold">
+                        League Scoring Trend
+                      </h2>
+                      <div className="text-xs text-white/60">
+                        avg total per game (recent)
+                      </div>
+                    </div>
+                    <div className="mt-4 h-[280px]">
+                      {scoringSeries.length === 0 ? (
+                        <div className="text-sm text-white/60">
+                          No scoring time series available.
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart
+                            data={scoringSeries}
+                            margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                            <XAxis
+                              dataKey="x"
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 11,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            />
+                            <YAxis
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 12,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                background: "rgba(0,0,0,0.9)",
+                                border: "1px solid rgba(255,255,255,0.15)",
+                                borderRadius: 12,
+                                color: "white",
+                              }}
+                              formatter={(v: any, k: any) => [v, k]}
+                            />
+                            <Legend
+                              verticalAlign="top"
+                              height={20}
+                              iconSize={8}
+                              wrapperStyle={{
+                                fontSize: 12,
+                                color: "rgba(255,255,255,0.75)",
+                              }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="avg_total"
+                              name="Avg total"
+                              stroke="rgba(255,255,255,0.8)"
+                              dot={false}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  </section>
+                </div>
+
+                {/* RIGHT PLOTS COLUMN */}
+                <div className="lg:col-span-5 flex flex-col gap-6">
+                  {/* Recent Form */}
+                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-base font-semibold">
+                        {team} Recent Form
+                      </h2>
+                      <div className="text-xs text-white/60">
+                        last {form?.last ?? 0}
+                      </div>
+                    </div>
+                    <div className="mt-4 h-[320px]">
+                      {formSeries.length === 0 ? (
+                        <div className="text-sm text-white/60">
+                          No games found for this team/season.
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart
+                            data={formSeries}
+                            margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                            <XAxis
+                              dataKey="idx"
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 11,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            />
+                            <YAxis
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 12,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                background: "rgba(0,0,0,0.9)",
+                                border: "1px solid rgba(255,255,255,0.15)",
+                                borderRadius: 12,
+                                color: "white",
+                              }}
+                              labelFormatter={(label: any) => `Game ${label}`}
+                            />
+                            <Legend
+                              verticalAlign="top"
+                              height={20}
+                              iconSize={8}
+                              wrapperStyle={{
+                                fontSize: 12,
+                                color: "rgba(255,255,255,0.75)",
+                              }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="sf"
+                              name="For"
+                              stroke="rgba(255,255,255,0.85)"
+                              dot={false}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="sa"
+                              name="Against"
+                              stroke="rgba(255,255,255,0.45)"
+                              dot={false}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  </section>
+
+                  {/* Home vs Away Splits */}
+                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-base font-semibold">
+                        Home vs Away Splits
+                      </h2>
+                      <div className="text-xs text-white/60">{team}</div>
+                    </div>
+                    <div className="mt-4 h-[280px]">
+                      {splitBars.length === 0 ? (
+                        <div className="text-sm text-white/60">No split data.</div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            data={splitBars}
+                            margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                            <XAxis
+                              dataKey="bucket"
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 12,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            />
+                            <YAxis
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 12,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                background: "rgba(0,0,0,0.9)",
+                                border: "1px solid rgba(255,255,255,0.15)",
+                                borderRadius: 12,
+                                color: "white",
+                              }}
+                              formatter={(v: any, k: any) => [v, k]}
+                            />
+                            <Legend
+                              verticalAlign="top"
+                              height={20}
+                              iconSize={8}
+                              wrapperStyle={{
+                                fontSize: 12,
+                                color: "rgba(255,255,255,0.75)",
+                              }}
+                            />
+                            <Bar
+                              dataKey="avg_for"
+                              name="Avg For"
+                              fill="rgba(255,255,255,0.75)"
+                            />
+                            <Bar
+                              dataKey="avg_against"
+                              name="Avg Against"
+                              fill="rgba(255,255,255,0.35)"
+                            />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  </section>
+
+                  {/* Margin Histogram */}
+                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-base font-semibold">Margin Histogram</h2>
+                      <div className="text-xs text-white/60">{team}</div>
+                    </div>
+                    <div className="mt-4 h-[240px]">
+                      {marginHistogram.length === 0 ? (
+                        <div className="text-sm text-white/60">
+                          No margins available.
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            data={marginHistogram}
+                            margin={{ top: 10, right: 10, bottom: 10, left: -10 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                            <XAxis
+                              dataKey="label"
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 11,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            />
+                            <YAxis
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 12,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              allowDecimals={false}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                background: "rgba(0,0,0,0.9)",
+                                border: "1px solid rgba(255,255,255,0.15)",
+                                borderRadius: 12,
+                                color: "white",
+                              }}
+                              formatter={(v: any, k: any, payload: any) => {
+                                const rng = payload?.payload?.range ?? "";
+                                return [v, `Games (${rng})`];
+                              }}
+                            />
+                            <Bar
+                              dataKey="count"
+                              name="Games"
+                              fill="rgba(255,255,255,0.6)"
+                            />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  </section>
+
+                  {/* Close Games */}
+                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <h2 className="text-base font-semibold">Close Games</h2>
+                      <div className="text-xs text-white/60">
+                        {team} (last {form?.last ?? 0})
+                      </div>
+                    </div>
+
+                    <div className="mt-3 text-xs text-white/60">
+                      Wins/losses in games decided by ≤3, ≤7, and ≤10 points.
+                    </div>
+
+                    <div className="mt-4 h-[240px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart
-                          data={splitBars}
+                          data={closeGamesBars(
+                            formSeries.map((d) => ({
+                              margin: d.margin,
+                              result: d.result,
+                            }))
+                          )}
                           margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
                         >
                           <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
@@ -933,6 +1210,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                             }}
                             axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
                             tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            allowDecimals={false}
                           />
                           <Tooltip
                             contentStyle={{
@@ -941,10 +1219,6 @@ export default function SportDashboard({ sport }: { sport: string }) {
                               borderRadius: 12,
                               color: "white",
                             }}
-                            formatter={(v: any, k: any) => [
-                              Number(v).toFixed(2),
-                              k,
-                            ]}
                           />
                           <Legend
                             verticalAlign="top"
@@ -956,329 +1230,185 @@ export default function SportDashboard({ sport }: { sport: string }) {
                             }}
                           />
                           <Bar
-                            dataKey="avg_for"
-                            name="For"
-                            fill="rgba(255,255,255,0.7)"
+                            dataKey="wins"
+                            name="Wins"
+                            fill="rgba(255,255,255,0.75)"
                           />
                           <Bar
-                            dataKey="avg_against"
-                            name="Against"
+                            dataKey="losses"
+                            name="Losses"
                             fill="rgba(255,255,255,0.35)"
                           />
                         </BarChart>
                       </ResponsiveContainer>
-                    )}
-                  </div>
-                </section>
-
-                {/* Margin Distribution */}
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <h2 className="text-base font-semibold">
-                      Margin Distribution
-                    </h2>
-                    <div className="text-xs text-white/60">{team}</div>
-                  </div>
-
-                  <div className="mt-4 h-[240px]">
-                    {marginHistogram.length === 0 ? (
-                      <div className="text-sm text-white/60">
-                        No margins to chart.
-                      </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                          data={marginHistogram}
-                          margin={{ top: 10, right: 10, bottom: 26, left: -10 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                          <XAxis
-                            dataKey="label"
-                            tick={{
-                              fill: "rgba(255,255,255,0.75)",
-                              fontSize: 10,
-                            }}
-                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            interval="preserveStartEnd"
-                            angle={-25}
-                            textAnchor="end"
-                            height={44}
-                          />
-                          <YAxis
-                            tick={{
-                              fill: "rgba(255,255,255,0.75)",
-                              fontSize: 12,
-                            }}
-                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            allowDecimals={false}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              background: "rgba(0,0,0,0.9)",
-                              border: "1px solid rgba(255,255,255,0.15)",
-                              borderRadius: 12,
-                              color: "white",
-                            }}
-                            // show the original "range" in tooltip
-                            labelFormatter={(lbl: any, payload: any) =>
-                              payload?.[0]?.payload?.range ?? lbl
-                            }
-                          />
-                          <Bar
-                            dataKey="count"
-                            name="Games"
-                            fill="rgba(255,255,255,0.6)"
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-
-                  <div className="mt-2 text-[11px] text-white/60">
-                    Bucketed by ~TD (7 pts).
-                  </div>
-                </section>
-
-                {/* Close Games */}
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <h2 className="text-base font-semibold">Close Games</h2>
-                    <div className="text-xs text-white/60">{team}</div>
-                  </div>
-
-                  <div className="mt-3 text-xs text-white/60">
-                    Wins vs losses in tight games (from the recent form window).
-                  </div>
-
-                  <div className="mt-4 h-[240px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={closeGamesBars(
-                          formSeries.map((g) => ({
-                            margin: g.margin,
-                            result: String(g.result ?? ""),
-                          }))
-                        )}
-                        margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                        <XAxis
-                          dataKey="bucket"
-                          tick={{
-                            fill: "rgba(255,255,255,0.75)",
-                            fontSize: 12,
-                          }}
-                          axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                        />
-                        <YAxis
-                          tick={{
-                            fill: "rgba(255,255,255,0.75)",
-                            fontSize: 12,
-                          }}
-                          axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          allowDecimals={false}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            background: "rgba(0,0,0,0.9)",
-                            border: "1px solid rgba(255,255,255,0.15)",
-                            borderRadius: 12,
-                            color: "white",
-                          }}
-                        />
-                        <Legend
-                          verticalAlign="top"
-                          height={20}
-                          iconSize={8}
-                          wrapperStyle={{
-                            fontSize: 12,
-                            color: "rgba(255,255,255,0.75)",
-                          }}
-                        />
-                        <Bar
-                          dataKey="wins"
-                          name="Wins"
-                          fill="rgba(255,255,255,0.75)"
-                        />
-                        <Bar
-                          dataKey="losses"
-                          name="Losses"
-                          fill="rgba(255,255,255,0.35)"
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </section>
-
-                {/* SOS */}
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <h2 className="text-base font-semibold">
-                      Strength of Schedule (Opponent Win%)
-                    </h2>
-                    <div className="text-xs text-white/60">
-                      avg{" "}
-                      {(sos?.sos_avg ?? 0) * 100 > 0
-                        ? `${((sos?.sos_avg ?? 0) * 100).toFixed(1)}%`
-                        : "—"}
                     </div>
-                  </div>
-                  <div className="mt-3 text-xs text-white/60">
-                    True SOS using opponents’ win% for {season} {seasonType}.
-                  </div>
+                  </section>
 
-                  <div className="mt-4 h-[260px]">
-                    {sosSeries.length === 0 ? (
-                      <div className="text-sm text-white/60">
-                        No SOS data yet.
+                  {/* SOS */}
+                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <h2 className="text-base font-semibold">
+                        Strength of Schedule (Opponent Win%)
+                      </h2>
+                      <div className="text-xs text-white/60">
+                        avg{" "}
+                        {(sos?.sos_avg ?? 0) * 100 > 0
+                          ? `${((sos?.sos_avg ?? 0) * 100).toFixed(1)}%`
+                          : "—"}
                       </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart
-                          data={sosSeries}
-                          // extra top margin because legend is now on top (prevents overlap)
-                          margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                          <XAxis
-                            dataKey="idx"
-                            tick={{
-                              fill: "rgba(255,255,255,0.75)",
-                              fontSize: 11,
-                            }}
-                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          />
-                          <YAxis
-                            domain={[0, 1]}
-                            tick={{
-                              fill: "rgba(255,255,255,0.75)",
-                              fontSize: 12,
-                            }}
-                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            tickFormatter={(v) => `${Math.round(v * 100)}%`}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              background: "rgba(0,0,0,0.9)",
-                              border: "1px solid rgba(255,255,255,0.15)",
-                              borderRadius: 12,
-                              color: "white",
-                            }}
-                            labelFormatter={(label: any) => `Game ${label}`}
-                            formatter={(val: any, key: any, payload: any) => {
-                              const p = payload?.payload;
-                              if (!p) return [val, key];
-                              const pct =
-                                typeof val === "number"
-                                  ? `${(val * 100).toFixed(1)}%`
-                                  : val;
-                              const sub = `${p.opponent} (${p.home_away}) ${p.result}`;
-                              return [pct, `${key} • ${sub}`];
-                            }}
-                          />
-                          <Legend
-                            verticalAlign="top"
-                            height={20}
-                            iconSize={8}
-                            wrapperStyle={{
-                              fontSize: 12,
-                              color: "rgba(255,255,255,0.75)",
-                            }}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="opp_win_pct"
-                            name="Opponent win%"
-                            stroke="rgba(255,255,255,0.45)"
-                            dot={false}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="sos_cum"
-                            name="SOS (cumulative)"
-                            stroke="rgba(255,255,255,0.85)"
-                            dot={false}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="sos_roll5"
-                            name="SOS (roll5)"
-                            stroke="rgba(255,255,255,0.65)"
-                            dot={false}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                </section>
-
-                {/* League Score Distribution */}
-                <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <h2 className="text-base font-semibold">
-                      Score Distribution (league)
-                    </h2>
-                    <div className="text-xs text-white/60">
-                      {season} {seasonType}
                     </div>
-                  </div>
-                  <div className="mt-4 h-[240px]">
-                    {scoringHistogram.length === 0 ? (
-                      <div className="text-sm text-white/60">
-                        No distribution available.
+                    <div className="mt-3 text-xs text-white/60">
+                      True SOS using opponents’ win% for {season} {seasonType}.
+                    </div>
+
+                    <div className="mt-4 h-[260px]">
+                      {sosSeries.length === 0 ? (
+                        <div className="text-sm text-white/60">
+                          No SOS data yet.
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart
+                            data={sosSeries}
+                            margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                            <XAxis
+                              dataKey="idx"
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 11,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            />
+                            <YAxis
+                              domain={[0, 1]}
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 12,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickFormatter={(v) => `${Math.round(v * 100)}%`}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                background: "rgba(0,0,0,0.9)",
+                                border: "1px solid rgba(255,255,255,0.15)",
+                                borderRadius: 12,
+                                color: "white",
+                              }}
+                              labelFormatter={(label: any) => `Game ${label}`}
+                              formatter={(val: any, key: any, payload: any) => {
+                                const p = payload?.payload;
+                                if (!p) return [val, key];
+                                const pct =
+                                  typeof val === "number"
+                                    ? `${(val * 100).toFixed(1)}%`
+                                    : val;
+                                const sub = `${p.opponent} (${p.home_away}) ${p.result}`;
+                                return [pct, `${key} • ${sub}`];
+                              }}
+                            />
+                            <Legend
+                              verticalAlign="top"
+                              height={20}
+                              iconSize={8}
+                              wrapperStyle={{
+                                fontSize: 12,
+                                color: "rgba(255,255,255,0.75)",
+                              }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="opp_win_pct"
+                              name="Opponent win%"
+                              stroke="rgba(255,255,255,0.45)"
+                              dot={false}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="sos_cum"
+                              name="SOS (cumulative)"
+                              stroke="rgba(255,255,255,0.85)"
+                              dot={false}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="sos_roll5"
+                              name="SOS (roll5)"
+                              stroke="rgba(255,255,255,0.65)"
+                              dot={false}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  </section>
+
+                  {/* League Score Distribution */}
+                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <h2 className="text-base font-semibold">
+                        Score Distribution (league)
+                      </h2>
+                      <div className="text-xs text-white/60">
+                        {season} {seasonType}
                       </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                          data={scoringHistogram}
-                          margin={{ top: 10, right: 10, bottom: 10, left: -10 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                          <XAxis
-                            dataKey="bin"
-                            tick={{
-                              fill: "rgba(255,255,255,0.75)",
-                              fontSize: 11,
-                            }}
-                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          />
-                          <YAxis
-                            tick={{
-                              fill: "rgba(255,255,255,0.75)",
-                              fontSize: 12,
-                            }}
-                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            allowDecimals={false}
-                          />
-                          <Tooltip
-                            contentStyle={{
-                              background: "rgba(0,0,0,0.9)",
-                              border: "1px solid rgba(255,255,255,0.15)",
-                              borderRadius: 12,
-                              color: "white",
-                            }}
-                          />
-                          <Bar
-                            dataKey="count"
-                            name="Games"
-                            fill="rgba(255,255,255,0.6)"
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                </section>
+                    </div>
+                    <div className="mt-4 h-[240px]">
+                      {scoringHistogram.length === 0 ? (
+                        <div className="text-sm text-white/60">
+                          No distribution available.
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            data={scoringHistogram}
+                            margin={{ top: 10, right: 10, bottom: 10, left: -10 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                            <XAxis
+                              dataKey="bin"
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 11,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            />
+                            <YAxis
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 12,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              allowDecimals={false}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                background: "rgba(0,0,0,0.9)",
+                                border: "1px solid rgba(255,255,255,0.15)",
+                                borderRadius: 12,
+                                color: "white",
+                              }}
+                            />
+                            <Bar
+                              dataKey="count"
+                              name="Games"
+                              fill="rgba(255,255,255,0.6)"
+                            />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  </section>
+                </div>
               </div>
             </div>
-          </>
+          </div>
         )}
       </div>
     </main>
