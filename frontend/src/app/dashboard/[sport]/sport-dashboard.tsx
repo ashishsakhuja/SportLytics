@@ -30,8 +30,6 @@ const SPORT_LABEL: Record<string, string> = {
 // Defaults you requested
 const DEFAULT_SEASON = 2025;
 const DEFAULT_SEASON_TYPE = "REG";
-
-// “AFC” isn’t a team code. This defaults to BUF if available; else first team.
 const DEFAULT_TEAM_CODE = "BUF";
 
 type StandingsRow = {
@@ -145,6 +143,28 @@ type ScoringTimeseriesResp = {
   avg_total_score: Array<number | null>;
 };
 
+type SosRow = {
+  idx: number;
+  date: string | null;
+  opponent: string;
+  home_away: "home" | "away";
+  result: "W" | "L" | "T" | null;
+  opp_win_pct: number;
+  sos_cum: number;
+  sos_roll5: number;
+};
+
+type SosResp = {
+  sport: string;
+  team: string;
+  season: number;
+  season_type: string;
+  games: number;
+  roll_window: number;
+  sos_avg: number;
+  rows: SosRow[];
+};
+
 function niceTeamLabel(r: {
   team_code: string;
   name?: string | null;
@@ -240,6 +260,8 @@ export default function SportDashboard({ sport }: { sport: string }) {
   );
   const [scoreTs, setScoreTs] = useState<ScoringTimeseriesResp | null>(null);
 
+  const [sos, setSos] = useState<SosResp | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -315,19 +337,24 @@ export default function SportDashboard({ sport }: { sport: string }) {
     if (!SUPPORTED.has(s) || !team) return;
     async function loadTeam() {
       try {
-        const [f, sp] = await Promise.all([
+        const [f, sp, sosResp] = await Promise.all([
           apiGet<TeamFormResp>(
             `/analytics/teams/${s}/${team}/form?season=${season}&season_type=${seasonType}&last=16`
           ),
           apiGet<HomeAwaySplitsResp>(
             `/analytics/teams/${s}/${team}/splits/home-away?season=${season}&season_type=${seasonType}`
           ),
+          apiGet<SosResp>(
+            `/analytics/teams/${s}/${team}/sos?season=${season}&season_type=${seasonType}&last=50`
+          ),
         ]);
         setForm(f);
         setSplits(sp);
+        setSos(sosResp);
       } catch {
         setForm(null);
         setSplits(null);
+        setSos(null);
       }
     }
     loadTeam();
@@ -398,6 +425,20 @@ export default function SportDashboard({ sport }: { sport: string }) {
     }));
   }, [scoreTs]);
 
+  const sosSeries = useMemo(() => {
+    if (!sos?.rows?.length) return [];
+    return sos.rows.map((r) => ({
+      idx: r.idx,
+      date: r.date ?? `G${r.idx}`,
+      opponent: r.opponent,
+      opp_win_pct: r.opp_win_pct,
+      sos_cum: r.sos_cum,
+      sos_roll5: r.sos_roll5,
+      home_away: r.home_away,
+      result: r.result ?? "",
+    }));
+  }, [sos]);
+
   // Rolling averages
   const rollingSeries = useMemo(() => {
     if (formSeries.length === 0) return [];
@@ -451,7 +492,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                 {SPORT_LABEL[s] ?? s.toUpperCase()} • Advanced Dashboard
               </div>
               <div className="text-xs text-white/60">
-                Standings + efficiency + form, splits, rolling trends
+                Standings + efficiency + form, splits, rolling trends + SOS
               </div>
             </div>
           </div>
@@ -967,7 +1008,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
               </div>
             </div>
 
-            {/* Row 4: league scoring trend + distribution */}
+            {/* Row 4: league trend (left) + SOS + league distribution (right stacked) */}
             <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
               <section className="lg:col-span-7 rounded-2xl border border-white/10 bg-white/5 p-5">
                 <div className="flex items-center justify-between">
@@ -1030,63 +1071,158 @@ export default function SportDashboard({ sport }: { sport: string }) {
                 </div>
               </section>
 
-              <section className="lg:col-span-5 rounded-2xl border border-white/10 bg-white/5 p-5">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold">
-                    Score Distribution (league)
-                  </h2>
-                  <div className="text-xs text-white/60">
-                    {season} {seasonType}
-                  </div>
-                </div>
-                <div className="mt-4 h-[280px]">
-                  {scoringHistogram.length === 0 ? (
-                    <div className="text-sm text-white/60">
-                      No distribution available.
+              <div className="lg:col-span-5 flex flex-col gap-6">
+                {/* SOS */}
+                <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-base font-semibold">
+                      Strength of Schedule (Opponent Win%)
+                    </h2>
+                    <div className="text-xs text-white/60">
+                      avg {(sos?.sos_avg ?? 0) * 100 > 0 ? `${((sos?.sos_avg ?? 0) * 100).toFixed(1)}%` : "—"}
                     </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={scoringHistogram}
-                        margin={{ top: 10, right: 10, bottom: 10, left: -10 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                        <XAxis
-                          dataKey="bin"
-                          tick={{
-                            fill: "rgba(255,255,255,0.75)",
-                            fontSize: 11,
-                          }}
-                          axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                        />
-                        <YAxis
-                          tick={{
-                            fill: "rgba(255,255,255,0.75)",
-                            fontSize: 12,
-                          }}
-                          axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                          allowDecimals={false}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            background: "rgba(0,0,0,0.9)",
-                            border: "1px solid rgba(255,255,255,0.15)",
-                            borderRadius: 12,
-                            color: "white",
-                          }}
-                        />
-                        <Bar
-                          dataKey="count"
-                          name="Games"
-                          fill="rgba(255,255,255,0.6)"
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </section>
+                  </div>
+                  <div className="mt-3 text-xs text-white/60">
+                    True SOS using opponents’ win% for {season} {seasonType}.
+                  </div>
+
+                  <div className="mt-4 h-[240px]">
+                    {sosSeries.length === 0 ? (
+                      <div className="text-sm text-white/60">
+                        No SOS data yet.
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart
+                          data={sosSeries}
+                          margin={{ top: 10, right: 10, bottom: 10, left: -10 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                          <XAxis
+                            dataKey="idx"
+                            tick={{
+                              fill: "rgba(255,255,255,0.75)",
+                              fontSize: 11,
+                            }}
+                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                          />
+                          <YAxis
+                            domain={[0, 1]}
+                            tick={{
+                              fill: "rgba(255,255,255,0.75)",
+                              fontSize: 12,
+                            }}
+                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            tickFormatter={(v) => `${Math.round(v * 100)}%`}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              background: "rgba(0,0,0,0.9)",
+                              border: "1px solid rgba(255,255,255,0.15)",
+                              borderRadius: 12,
+                              color: "white",
+                            }}
+                            labelFormatter={(label: any) => `Game ${label}`}
+                            formatter={(val: any, key: any, payload: any) => {
+                              const p = payload?.payload;
+                              if (!p) return [val, key];
+                              const pct =
+                                typeof val === "number"
+                                  ? `${(val * 100).toFixed(1)}%`
+                                  : val;
+                              const sub = `${p.opponent} (${p.home_away}) ${p.result}`;
+                              return [pct, `${key} • ${sub}`];
+                            }}
+                          />
+                          <Legend />
+                          <Line
+                            type="monotone"
+                            dataKey="opp_win_pct"
+                            name="Opponent win%"
+                            stroke="rgba(255,255,255,0.45)"
+                            dot={false}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="sos_cum"
+                            name="SOS (cumulative)"
+                            stroke="rgba(255,255,255,0.85)"
+                            dot={false}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="sos_roll5"
+                            name="SOS (roll5)"
+                            stroke="rgba(255,255,255,0.65)"
+                            dot={false}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </section>
+
+                {/* League Score Distribution */}
+                <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-base font-semibold">
+                      Score Distribution (league)
+                    </h2>
+                    <div className="text-xs text-white/60">
+                      {season} {seasonType}
+                    </div>
+                  </div>
+                  <div className="mt-4 h-[240px]">
+                    {scoringHistogram.length === 0 ? (
+                      <div className="text-sm text-white/60">
+                        No distribution available.
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={scoringHistogram}
+                          margin={{ top: 10, right: 10, bottom: 10, left: -10 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                          <XAxis
+                            dataKey="bin"
+                            tick={{
+                              fill: "rgba(255,255,255,0.75)",
+                              fontSize: 11,
+                            }}
+                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                          />
+                          <YAxis
+                            tick={{
+                              fill: "rgba(255,255,255,0.75)",
+                              fontSize: 12,
+                            }}
+                            axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            allowDecimals={false}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              background: "rgba(0,0,0,0.9)",
+                              border: "1px solid rgba(255,255,255,0.15)",
+                              borderRadius: 12,
+                              color: "white",
+                            }}
+                          />
+                          <Bar
+                            dataKey="count"
+                            name="Games"
+                            fill="rgba(255,255,255,0.6)"
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </section>
+              </div>
             </div>
           </>
         )}
