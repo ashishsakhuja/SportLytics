@@ -13,4 +13,5 @@ python-dateutil
 sa
 openai
 python-dotenv
+redis
 
