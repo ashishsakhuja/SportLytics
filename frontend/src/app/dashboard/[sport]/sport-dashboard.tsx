@@ -289,18 +289,27 @@ export default function SportDashboard({ sport }: { sport: string }) {
     null
   );
   const [scoreTs, setScoreTs] = useState<ScoringTimeseriesResp | null>(null);
-
   const [sos, setSos] = useState<SosResp | null>(null);
-
   const [news, setNews] = useState<NewsItem[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
+  // Fade-in on load (premium feel)
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // Dropdown styles: readable options
   const selectClass =
     "rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/25 text-white";
   const optionClass = "bg-[#0b0b0b] text-white";
+
+  // Subtle hover glow on ALL cards
+  const cardClass =
+    "rounded-2xl border border-white/10 bg-white/5 p-5 transition-all duration-200 " +
+    "hover:border-white/20 hover:shadow-[0_0_0_1px_rgba(255,255,255,0.10),0_16px_50px_rgba(0,0,0,0.55)]";
 
   useEffect(() => {
     if (!SUPPORTED.has(s)) return;
@@ -568,10 +577,13 @@ export default function SportDashboard({ sport }: { sport: string }) {
         </div>
       </header>
 
-      {/* LAYOUT CHANGE:
-          Full-width container so the News sidebar can sit near the left edge.
-          Sidebar fixed-ish width; main content keeps your 2-column plot grid. */}
-      <div className="w-full px-6 py-8">
+      {/* Fade in the full dashboard area */}
+      <div
+        className={[
+          "w-full px-6 py-8 transition-all duration-500 ease-out",
+          mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2",
+        ].join(" ")}
+      >
         {loading ? (
           <div className="text-white/70">Loading…</div>
         ) : err ? (
@@ -581,19 +593,24 @@ export default function SportDashboard({ sport }: { sport: string }) {
           </div>
         ) : (
           <div className="flex gap-6">
-            {/* LEFT SIDEBAR: News (narrower + edge-ish) */}
+            {/* LEFT SIDEBAR: Sticky + independent scroll */}
             <aside className="hidden xl:block w-[340px] shrink-0">
-              <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <section
+                className={[
+                  cardClass,
+                  "sticky top-[88px] h-[calc(100vh-110px)] overflow-hidden",
+                ].join(" ")}
+              >
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold">
                     Latest {SPORT_LABEL[s] ?? s.toUpperCase()} Headlines
                   </h2>
                   <div className="text-xs text-white/60">
-                    Showing {Math.min(12, news.length)} of {news.length}
+                    {Math.min(12, news.length)} / {news.length}
                   </div>
                 </div>
 
-                <div className="mt-4 space-y-3">
+                <div className="mt-4 h-[calc(100%-42px)] overflow-y-auto pr-1 space-y-3">
                   {news.length === 0 ? (
                     <div className="text-sm text-white/60">
                       No recent articles found.
@@ -607,7 +624,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                           href={n.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="group block rounded-xl border border-white/10 bg-black/30 p-4 hover:bg-black/40"
+                          className="group block rounded-xl border border-white/10 bg-black/30 p-4 transition hover:bg-black/40 hover:border-white/20"
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div>
@@ -638,13 +655,13 @@ export default function SportDashboard({ sport }: { sport: string }) {
               </section>
             </aside>
 
-            {/* MAIN CONTENT: keep your 2 plot columns grid */}
+            {/* MAIN CONTENT */}
             <div className="flex-1">
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
                 {/* LEFT PLOTS COLUMN */}
                 <div className="lg:col-span-7 flex flex-col gap-6">
-                  {/* On smaller screens, show News at top (only when sidebar hidden) */}
-                  <section className="xl:hidden rounded-2xl border border-white/10 bg-white/5 p-5">
+                  {/* On smaller screens, show News at top */}
+                  <section className={`xl:hidden ${cardClass}`}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
                         Latest {SPORT_LABEL[s] ?? s.toUpperCase()} Headlines
@@ -668,7 +685,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                               href={n.url}
                               target="_blank"
                               rel="noreferrer"
-                              className="group block rounded-xl border border-white/10 bg-black/30 p-4 hover:bg-black/40"
+                              className="group block rounded-xl border border-white/10 bg-black/30 p-4 transition hover:bg-black/40 hover:border-white/20"
                             >
                               <div className="flex items-start justify-between gap-3">
                                 <div>
@@ -701,7 +718,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                   </section>
 
                   {/* Offense vs Defense */}
-                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <section className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
                         Offense vs Defense
@@ -757,7 +774,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                   </section>
 
                   {/* Rolling Averages */}
-                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <section className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
                         Rolling Averages (5-game)
@@ -832,7 +849,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                   </section>
 
                   {/* Standings */}
-                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <section className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">Standings</h2>
                       <div className="text-xs text-white/60">
@@ -892,7 +909,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                   </section>
 
                   {/* League Scoring Trend */}
-                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <section className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
                         League Scoring Trend
@@ -965,7 +982,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                 {/* RIGHT PLOTS COLUMN */}
                 <div className="lg:col-span-5 flex flex-col gap-6">
                   {/* Recent Form */}
-                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <section className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
                         {team} Recent Form
@@ -1042,7 +1059,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                   </section>
 
                   {/* Home vs Away Splits */}
-                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <section className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
                         Home vs Away Splits
@@ -1111,7 +1128,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                   </section>
 
                   {/* Margin Histogram */}
-                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <section className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">Margin Histogram</h2>
                       <div className="text-xs text-white/60">{team}</div>
@@ -1170,7 +1187,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                   </section>
 
                   {/* Close Games */}
-                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <section className={cardClass}>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <h2 className="text-base font-semibold">Close Games</h2>
                       <div className="text-xs text-white/60">
@@ -1245,7 +1262,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                   </section>
 
                   {/* SOS */}
-                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <section className={cardClass}>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <h2 className="text-base font-semibold">
                         Strength of Schedule (Opponent Win%)
@@ -1348,7 +1365,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                   </section>
 
                   {/* League Score Distribution */}
-                  <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <section className={cardClass}>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <h2 className="text-base font-semibold">
                         Score Distribution (league)
