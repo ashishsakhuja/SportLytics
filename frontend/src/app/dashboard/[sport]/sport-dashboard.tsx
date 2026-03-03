@@ -18,6 +18,7 @@ import {
 } from "recharts";
 
 import { apiGet } from "@/lib/api";
+import ChartCaption from "@/components/ChartCaption";
 
 const SUPPORTED = new Set(["nfl", "nba", "mlb", "nhl"]);
 const SPORT_LABEL: Record<string, string> = {
@@ -311,6 +312,11 @@ export default function SportDashboard({ sport }: { sport: string }) {
     "rounded-2xl border border-white/10 bg-white/5 p-5 transition-all duration-200 " +
     "hover:border-white/20 hover:shadow-[0_0_0_1px_rgba(255,255,255,0.10),0_16px_50px_rgba(0,0,0,0.55)]";
 
+  // Sub-box styling for AI Insights (same glow language as dashboard cards)
+  const aiBoxClass =
+    "mt-4 rounded-2xl border border-white/10 bg-black/30 p-4 transition-all duration-200 " +
+    "hover:border-white/20 hover:shadow-[0_0_0_1px_rgba(255,255,255,0.10),0_16px_50px_rgba(0,0,0,0.55)]";
+
   useEffect(() => {
     if (!SUPPORTED.has(s)) return;
 
@@ -499,6 +505,115 @@ export default function SportDashboard({ sport }: { sport: string }) {
     const margins = formSeries.map((d) => d.margin);
     return histogram(margins, 7);
   }, [formSeries]);
+
+  // -----------------------------
+  // AI summary objects (numbers only)
+  // -----------------------------
+  const recentFormSummary = useMemo(() => {
+    if (!formSeries || formSeries.length === 0) return {};
+    const n = formSeries.length;
+    const lastN = Math.min(5, n);
+    const prevN = Math.min(5, Math.max(0, n - lastN));
+
+    const avg = (arr: number[]) =>
+      arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+    const last = formSeries.slice(n - lastN);
+    const prev =
+      prevN > 0 ? formSeries.slice(n - lastN - prevN, n - lastN) : [];
+
+    const r2 = (v: number | null) =>
+      v == null ? null : Math.round(v * 100) / 100;
+
+    const last_pf = avg(last.map((d) => Number(d.sf)));
+    const last_pa = avg(last.map((d) => Number(d.sa)));
+    const prev_pf = avg(prev.map((d) => Number(d.sf)));
+    const prev_pa = avg(prev.map((d) => Number(d.sa)));
+    const last_margin = avg(last.map((d) => Number(d.margin)));
+
+    return {
+      last_games: lastN,
+      prev_games: prevN,
+      last_pf: r2(last_pf),
+      last_pa: r2(last_pa),
+      prev_pf: r2(prev_pf),
+      prev_pa: r2(prev_pa),
+      last_margin: r2(last_margin),
+      delta_pf: r2(last_pf == null || prev_pf == null ? null : last_pf - prev_pf),
+      delta_pa: r2(last_pa == null || prev_pa == null ? null : last_pa - prev_pa),
+    };
+  }, [formSeries]);
+
+  const rollingAvgSummary = useMemo(() => {
+    if (!rollingSeries || rollingSeries.length === 0) return {};
+    const n = rollingSeries.length;
+
+    const last: any = rollingSeries[n - 1];
+    const prev: any = n >= 6 ? rollingSeries[n - 6] : null;
+
+    const r2 = (v: number | null | undefined) =>
+      v == null ? null : Math.round(Number(v) * 100) / 100;
+
+    const last_pf_roll5 = r2(last?.pf_roll5);
+    const last_pa_roll5 = r2(last?.pa_roll5);
+    const prev_pf_roll5 = r2(prev?.pf_roll5);
+    const prev_pa_roll5 = r2(prev?.pa_roll5);
+
+    return {
+      last_pf_roll5,
+      last_pa_roll5,
+      prev_pf_roll5,
+      prev_pa_roll5,
+      delta_pf_roll5:
+        last_pf_roll5 == null || prev_pf_roll5 == null
+          ? null
+          : r2(last_pf_roll5 - prev_pf_roll5),
+      delta_pa_roll5:
+        last_pa_roll5 == null || prev_pa_roll5 == null
+          ? null
+          : r2(last_pa_roll5 - prev_pa_roll5),
+    };
+  }, [rollingSeries]);
+
+  const sosSummary = useMemo(() => {
+    if (!sosSeries || sosSeries.length === 0) return {};
+    const n = sosSeries.length;
+    const lastN = Math.min(5, n);
+    const prevN = Math.min(5, Math.max(0, n - lastN));
+
+    const avg = (arr: number[]) =>
+      arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+    const last = sosSeries.slice(n - lastN);
+    const prev =
+      prevN > 0 ? sosSeries.slice(n - lastN - prevN, n - lastN) : [];
+
+    const r3 = (v: number | null) =>
+      v == null ? null : Math.round(v * 1000) / 1000;
+
+    const last_opp = avg(last.map((d) => Number(d.opp_win_pct)));
+    const prev_opp = avg(prev.map((d) => Number(d.opp_win_pct)));
+
+    const last_sos_roll5 = r3((last[last.length - 1] as any)?.sos_roll5 ?? null);
+    const prev_sos_roll5 = prev.length
+      ? r3((prev[prev.length - 1] as any)?.sos_roll5 ?? null)
+      : null;
+
+    return {
+      last_games: lastN,
+      prev_games: prevN,
+      last_opp_win_pct: r3(last_opp),
+      prev_opp_win_pct: r3(prev_opp),
+      delta_opp_win_pct:
+        last_opp == null || prev_opp == null ? null : r3(last_opp - prev_opp),
+      last_sos_roll5,
+      prev_sos_roll5,
+      delta_sos_roll5:
+        last_sos_roll5 == null || prev_sos_roll5 == null
+          ? null
+          : r3(last_sos_roll5 - prev_sos_roll5),
+    };
+  }, [sosSeries]);
 
   if (!SUPPORTED.has(s)) {
     return (
@@ -735,7 +850,10 @@ export default function SportDashboard({ sport }: { sport: string }) {
                             type="number"
                             dataKey="avg_pf"
                             name="For"
-                            tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+                            tick={{
+                              fill: "rgba(255,255,255,0.75)",
+                              fontSize: 12,
+                            }}
                             axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
                             tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
                           />
@@ -743,7 +861,10 @@ export default function SportDashboard({ sport }: { sport: string }) {
                             type="number"
                             dataKey="avg_pa"
                             name="Against"
-                            tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+                            tick={{
+                              fill: "rgba(255,255,255,0.75)",
+                              fontSize: 12,
+                            }}
                             axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
                             tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
                           />
@@ -846,6 +967,29 @@ export default function SportDashboard({ sport }: { sport: string }) {
                         </ResponsiveContainer>
                       )}
                     </div>
+
+                    {rollingSeries.length === 0 ? null : (
+                      <div className={aiBoxClass}>
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-semibold tracking-tight">
+                            AI Insights
+                          </div>
+                          <div className="text-[11px] text-white/60">
+                            auto-generated
+                          </div>
+                        </div>
+                        <div className="mt-2">
+                          <ChartCaption
+                            chartId="rolling-averages"
+                            sport={s}
+                            season={season}
+                            seasonType={seasonType}
+                            team={team}
+                            summary={rollingAvgSummary}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </section>
 
                   {/* Standings */}
@@ -1056,6 +1200,29 @@ export default function SportDashboard({ sport }: { sport: string }) {
                         </ResponsiveContainer>
                       )}
                     </div>
+
+                    {formSeries.length === 0 ? null : (
+                      <div className={aiBoxClass}>
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-semibold tracking-tight">
+                            AI Insights
+                          </div>
+                          <div className="text-[11px] text-white/60">
+                            auto-generated
+                          </div>
+                        </div>
+                        <div className="mt-2">
+                          <ChartCaption
+                            chartId="recent-form"
+                            sport={s}
+                            season={season}
+                            seasonType={seasonType}
+                            team={team}
+                            summary={recentFormSummary}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </section>
 
                   {/* Home vs Away Splits */}
@@ -1362,6 +1529,29 @@ export default function SportDashboard({ sport }: { sport: string }) {
                         </ResponsiveContainer>
                       )}
                     </div>
+
+                    {sosSeries.length === 0 ? null : (
+                      <div className={aiBoxClass}>
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-semibold tracking-tight">
+                            AI Insights
+                          </div>
+                          <div className="text-[11px] text-white/60">
+                            auto-generated
+                          </div>
+                        </div>
+                        <div className="mt-2">
+                          <ChartCaption
+                            chartId="strength-of-schedule"
+                            sport={s}
+                            season={season}
+                            seasonType={seasonType}
+                            team={team}
+                            summary={sosSummary}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </section>
 
                   {/* League Score Distribution */}

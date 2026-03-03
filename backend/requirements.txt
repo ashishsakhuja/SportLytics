@@ -12,4 +12,5 @@ feedparser
 python-dateutil
 sa
 openai
+python-dotenv
 
