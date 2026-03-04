@@ -27,8 +27,6 @@ class NFLGameRow:
     source_url: str
 
 
-# ESPN -> your team codes (ESPN uses standard abbreviations already)
-# But include normalization in case.
 _TEAM_CODE_NORMALIZE = {
     "JAC": "JAX",
     "WSH": "WAS",
@@ -43,26 +41,20 @@ def _norm(code: str) -> str:
 def _parse_utc(dt_str: Optional[str]) -> Optional[datetime]:
     if not dt_str:
         return None
-    # ESPN uses ISO 8601 like "2024-09-08T17:00Z"
     try:
-        # handle Z
         if dt_str.endswith("Z"):
             dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
         else:
             dt = datetime.fromisoformat(dt_str)
-        # store naive UTC for consistency with your DB (or keep aware; your model uses DateTime without tz)
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     except Exception:
         return None
 
 
 def _map_status(espn_status: Dict[str, Any]) -> tuple[str, Optional[str]]:
-    """
-    ESPN: status.type.name / state / completed
-    """
     st = (espn_status.get("type") or {}).get("state") or ""
     completed = (espn_status.get("type") or {}).get("completed")
-    detail = (espn_status.get("type") or {}).get("detail")  # "Final", "Q3 10:22", etc.
+    detail = (espn_status.get("type") or {}).get("detail")
 
     if completed is True:
         return "final", detail
@@ -73,18 +65,32 @@ def _map_status(espn_status: Dict[str, Any]) -> tuple[str, Optional[str]]:
 
 async def fetch_espn_scoreboard(*, week: int, season: int, season_type: str) -> Dict[str, Any]:
     """
-    ESPN scoreboard supports: ?seasontype=2&week=1&year=2024
-    seasontype: 1=pre, 2=reg, 3=post
+    ESPN NFL scoreboard historical seasons:
+    Use `dates=<YYYY>` (or fallback `season=<YYYY>`), NOT `year=<YYYY>`.
+    Supported params commonly include: dates, week, seasontype, season. :contentReference[oaicite:1]{index=1}
     """
     st_map = {"PRE": 1, "REG": 2, "POST": 3}
     seasontype_num = st_map.get(season_type.upper().strip(), 2)
 
-    params = {"week": week, "year": season, "seasontype": seasontype_num}
-
-    async with httpx.AsyncClient(timeout=20.0, headers={"User-Agent": "SportLytics/1.0"}) as client:
+    async with httpx.AsyncClient(timeout=25.0, headers={"User-Agent": "SportLytics/1.0"}) as client:
+        # 1) Primary: dates=<YYYY>
+        params = {"week": week, "dates": str(season), "seasontype": seasontype_num}
         r = await client.get(settings.ESPN_NFL_SCOREBOARD_URL, params=params)
         r.raise_for_status()
-        return r.json()
+        j = r.json()
+
+        # If ESPN returns empty, try fallback shapes
+        events = j.get("events") or []
+        if isinstance(events, list) and len(events) > 0:
+            return j
+
+        # 2) Fallback: season=<YYYY>
+        params2 = {"week": week, "season": str(season), "seasontype": seasontype_num}
+        r2 = await client.get(settings.ESPN_NFL_SCOREBOARD_URL, params=params2)
+        r2.raise_for_status()
+        j2 = r2.json()
+
+        return j2
 
 
 def parse_espn_scoreboard(
@@ -100,8 +106,7 @@ def parse_espn_scoreboard(
     for ev in events:
         raw_id = str(ev.get("id") or "")
         eid = f"{season}-{raw_id}"
-
-        if not eid:
+        if not raw_id:
             continue
 
         date = _parse_utc(ev.get("date"))
@@ -122,7 +127,6 @@ def parse_espn_scoreboard(
         home_team = _norm(((home.get("team") or {}).get("abbreviation") or ""))
         away_team = _norm(((away.get("team") or {}).get("abbreviation") or ""))
 
-        # scores arrive as strings sometimes
         def _to_int(x: Any) -> Optional[int]:
             try:
                 if x is None:
