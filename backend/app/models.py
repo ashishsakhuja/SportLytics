@@ -176,3 +176,33 @@ class StandingsSnapshot(Base):
         Index("ix_standings_sport_season_asof", "sport", "season", "as_of"),
         Index("ix_standings_sport_team_asof", "sport", "team_code", "as_of"),
     )
+
+
+class TeamGameStats(Base):
+    """Per-team, per-game boxscore/advanced stats stored as JSON.
+
+    We keep this sport-agnostic so each sport can write its own stat keys without
+    exploding the schema with hundreds of nullable columns.
+    """
+
+    __tablename__ = "team_game_stats"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    sport: Mapped[str] = mapped_column(String(30), index=True)
+    game_id: Mapped[int] = mapped_column(Integer, index=True)
+
+    team_code: Mapped[str] = mapped_column(String(10), index=True)
+    season: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    season_type: Mapped[str | None] = mapped_column(String(10), index=True, nullable=True)
+
+    # Free-form per-sport stats (standardized keys + raw ESPN keys)
+    stats = sa.Column(JSONB, nullable=False)
+
+    source: Mapped[str] = mapped_column(String(60), default="espn_summary", index=True)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("sport", "game_id", "team_code", name="ux_team_game_stats"),
+        Index("ix_team_game_stats_sport_team_season", "sport", "team_code", "season"),
+    )
