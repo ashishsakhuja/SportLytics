@@ -69,6 +69,83 @@ def _extract_team_rows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     return teams if isinstance(teams, list) else []
 
 
+def _iter_stat_entries(node: Any):
+    """
+    ESPN is inconsistent: team stats can be flat OR nested by categories.
+    Yield leaf dicts that contain (name/abbreviation/label) and (displayValue/value).
+    """
+    if node is None:
+        return
+
+    if isinstance(node, list):
+        for item in node:
+            yield from _iter_stat_entries(item)
+        return
+
+    if isinstance(node, dict):
+        # Leaf stat
+        if ("displayValue" in node or "value" in node) and (
+            "name" in node or "abbreviation" in node or "label" in node
+        ):
+            yield node
+            return
+
+        # Known containers
+        for k in ("statistics", "stats", "categories", "splits", "items", "entries"):
+            child = node.get(k)
+            if isinstance(child, (list, dict)):
+                yield from _iter_stat_entries(child)
+
+
+def _find_players_totals_nfl(payload: Dict[str, Any], team_code: str) -> Dict[str, Any]:
+    """
+    Fallback when teams[].statistics doesn't include C/ATT.
+    Looks in boxscore.players for the team's 'passing' category totals and parses C/ATT.
+    """
+    box = (payload or {}).get("boxscore") or {}
+    players = box.get("players") or []
+    if not isinstance(players, list):
+        return {}
+
+    team_code = (team_code or "").upper().strip()
+    if not team_code:
+        return {}
+
+    for team_block in players:
+        team = (team_block or {}).get("team") or {}
+        abbr = (team.get("abbreviation") or "").upper().strip()
+        if abbr != team_code:
+            continue
+
+        stats_cats = team_block.get("statistics") or []
+        if not isinstance(stats_cats, list):
+            continue
+
+        for cat in stats_cats:
+            cat_name = (cat.get("name") or "").lower().strip()
+            if cat_name != "passing":
+                continue
+
+            labels = cat.get("labels") or []
+            totals = cat.get("totals") or []
+            if not isinstance(labels, list) or not isinstance(totals, list):
+                continue
+
+            # Find a "C/ATT"-type label
+            target_idx = None
+            for i, lab in enumerate(labels):
+                lab_s = (str(lab) or "").strip().lower()
+                if lab_s in {"c/att", "c-att", "comp-att", "completions-attempts", "cmp-att"}:
+                    target_idx = i
+                    break
+
+            if target_idx is not None and target_idx < len(totals):
+                v = totals[target_idx]
+                return {"c_att": v}
+
+    return {}
+
+
 def _standardize_nfl(raw: Dict[str, Any]) -> Dict[str, Any]:
     def g(*keys: str) -> Any:
         for k in keys:
@@ -78,14 +155,7 @@ def _standardize_nfl(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     out: Dict[str, Any] = {}
 
-    # --------------------------
-    # PASSING: cmp / att handling
-    # ESPN may provide:
-    #  - combined "C/ATT" style
-    #  - OR separate "Completions" and "Attempts"
-    # --------------------------
-
-    # 1) Combined C/ATT
+    # Combined C/ATT
     ca = g(
         "completions_attempts",
         "completion_attempts",
@@ -105,58 +175,27 @@ def _standardize_nfl(raw: Dict[str, Any]) -> Dict[str, Any]:
         if att_ is not None:
             out["pass_att"] = att_
 
-    # 2) Separate completions / attempts
+    # Separate completions/attempts
     if out.get("pass_cmp") is None:
-        out["pass_cmp"] = _safe_int(
-            g(
-                "completions",
-                "passing_completions",
-                "pass_completions",
-                "cmp",
-                "comp",
-            )
-        )
+        out["pass_cmp"] = _safe_int(g("completions", "passing_completions", "pass_completions", "cmp", "comp"))
     if out.get("pass_att") is None:
-        out["pass_att"] = _safe_int(
-            g(
-                "attempts",
-                "passing_attempts",
-                "pass_attempts",
-                "att",
-                "pass_att",
-            )
-        )
+        out["pass_att"] = _safe_int(g("attempts", "passing_attempts", "pass_attempts", "att", "pass_att"))
 
-    # Completion %
     if out.get("completion_pct") is None and out.get("pass_cmp") is not None and out.get("pass_att"):
         att = out["pass_att"]
         if att and att > 0:
             out["completion_pct"] = round((out["pass_cmp"] / att) * 100.0, 6)
 
-    # Pass yards
     out["pass_yds"] = _safe_int(
-        g(
-            "passing_yards",
-            "passingyards",
-            "net_passing_yards",
-            "netpassingyards",
-            "pass_yards",
-            "passyds",
-            "pass_yds",
-        )
+        g("passing_yards", "passingyards", "net_passing_yards", "netpassingyards", "pass_yards", "passyds", "pass_yds")
     )
 
-    # Rush attempts / yards
     out["rush_att"] = _safe_int(g("rushing_attempts", "rushingattempts", "rush_attempts", "rushatt", "rush_att"))
     out["rush_yds"] = _safe_int(g("rushing_yards", "rushingyards", "rush_yards", "rushyds", "rush_yds"))
 
-    # Total yards
     out["total_yds"] = _safe_int(g("total_yards", "totalyards", "yds", "totalyds"))
-
-    # Turnovers
     out["turnovers"] = _safe_int(g("turnovers", "to", "total_turnovers", "turnover"))
 
-    # Sacks + yards lost (often "2-14")
     sacks_combo = g(
         "sacks_yards_lost",
         "sacksyardslost",
@@ -175,8 +214,6 @@ def _standardize_nfl(raw: Dict[str, Any]) -> Dict[str, Any]:
     else:
         out["sacks"] = _safe_int(g("sacks", "qb_sacks"))
 
-    # Third down efficiency:
-    # could be "7-13" OR could be percent already
     td = g(
         "third_down_eff",
         "third_down_efficiency",
@@ -197,8 +234,6 @@ def _standardize_nfl(raw: Dict[str, Any]) -> Dict[str, Any]:
             if pct is not None:
                 out["third_down_pct"] = round(pct, 6)
 
-    # Red zone efficiency:
-    # could be "3-4" OR could be percent already
     rz = g(
         "red_zone_eff",
         "red_zone_efficiency",
@@ -218,9 +253,7 @@ def _standardize_nfl(raw: Dict[str, Any]) -> Dict[str, Any]:
             if pct is not None:
                 out["red_zone_td_pct"] = round(pct, 6)
 
-    # --------------------------
-    # Derived metrics (once enough inputs exist)
-    # --------------------------
+    # Derived
     pass_att = out.get("pass_att")
     pass_yds = out.get("pass_yds")
     rush_att = out.get("rush_att")
@@ -228,16 +261,11 @@ def _standardize_nfl(raw: Dict[str, Any]) -> Dict[str, Any]:
     sacks = out.get("sacks")
     total_yds = out.get("total_yds")
 
-    # ypa
     if out.get("ypa") is None and pass_att and pass_att > 0 and pass_yds is not None:
         out["ypa"] = round(pass_yds / pass_att, 6)
-
-    # rypa
     if out.get("rypa") is None and rush_att and rush_att > 0 and rush_yds is not None:
         out["rypa"] = round(rush_yds / rush_att, 6)
 
-    # dropbacks / pass rate / sack rate
-    # (approx: dropbacks = pass_att + sacks)
     if pass_att is not None and rush_att is not None:
         dropbacks = pass_att + (sacks or 0)
         denom = dropbacks + rush_att
@@ -246,7 +274,6 @@ def _standardize_nfl(raw: Dict[str, Any]) -> Dict[str, Any]:
         if dropbacks > 0 and sacks is not None:
             out["sack_rate"] = round(sacks / dropbacks, 6)
 
-    # plays / ypp (approx offensive plays)
     if out.get("plays") is None and pass_att is not None and rush_att is not None:
         out["plays"] = int(pass_att + rush_att + (sacks or 0))
     if out.get("ypp") is None and out.get("plays") and total_yds is not None:
@@ -254,7 +281,6 @@ def _standardize_nfl(raw: Dict[str, Any]) -> Dict[str, Any]:
         if plays and plays > 0:
             out["ypp"] = round(total_yds / plays, 6)
 
-    # drop Nones
     return {k: v for k, v in out.items() if v is not None}
 
 
@@ -297,9 +323,12 @@ def parse_team_boxscore_stats(payload: Dict[str, Any], *, sport: str) -> Dict[st
 
         raw: Dict[str, Any] = {}
 
-        stats_list = t.get("statistics") or []
-        for s in stats_list:
-            name = (s.get("name") or "").strip()
+        stats_node = t.get("statistics")
+        for s in _iter_stat_entries(stats_node):
+            if not isinstance(s, dict):
+                continue
+
+            name = (s.get("name") or "").strip() or (s.get("label") or "").strip()
             abbr = (s.get("abbreviation") or "").strip()
 
             value = s.get("displayValue")
@@ -310,6 +339,11 @@ def parse_team_boxscore_stats(payload: Dict[str, Any], *, sport: str) -> Dict[st
                 raw[_snake(name)] = value
             if abbr:
                 raw[_snake(abbr)] = value
+
+        # NFL-only fallback: pull C/ATT from players totals if missing
+        if sport.lower().strip() == "nfl":
+            if not any(k in raw for k in ("c_att", "cmp_att", "comp_att", "completions_attempts", "completion_attempts")):
+                raw.update(_find_players_totals_nfl(payload, team_code))
 
         standard = _standardize_common(sport=sport, raw=raw)
 

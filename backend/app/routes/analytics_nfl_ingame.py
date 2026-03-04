@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -30,9 +30,6 @@ def _to_float(v: Any) -> Optional[float]:
     s = str(v).strip()
     if not s:
         return None
-    # Made/att like "12/18" -> not numeric here (we already store pct fields separately)
-    if "/" in s:
-        return None
     if s.endswith("%"):
         s = s[:-1].strip()
     try:
@@ -58,11 +55,14 @@ def _get_any(d: Dict[str, Any], *keys: str) -> Any:
     return None
 
 
-def _parse_dash_pair(v: Any) -> tuple[Optional[int], Optional[int]]:
-    """Parse strings like '2-10' => (2, 10)."""
+def _parse_ratio(v: Any) -> Tuple[Optional[int], Optional[int]]:
+    """Parse '18/27' or '7-13' -> (18,27)."""
     if v is None:
         return (None, None)
     s = str(v).strip()
+    if not s:
+        return (None, None)
+    s = s.replace("/", "-")
     if "-" not in s:
         return (_to_int(s), None)
     left, right = s.split("-", 1)
@@ -78,11 +78,6 @@ def nfl_in_game_summary(
     roll: int = Query(5, ge=2, le=20, description="Rolling window size"),
     db: Session = Depends(get_db),
 ):
-    """NFL-only in-game/boxscore analytics built from TeamGameStats JSON.
-
-    Returns one row per game with base stats + derived efficiency metrics.
-    Designed to power multiple charts with ONE request.
-    """
     sport = "nfl"
     team_code = (team_code or "").upper().strip()
     season_type = (season_type or "").upper().strip()
@@ -120,7 +115,6 @@ def nfl_in_game_summary(
             return None
         return sum(w) / len(w)
 
-    # We'll compute rolling later in a pass
     ypa_vals: List[Optional[float]] = []
     comp_vals: List[Optional[float]] = []
     sack_rate_vals: List[Optional[float]] = []
@@ -147,42 +141,71 @@ def nfl_in_game_summary(
         stats = tgs.stats if isinstance(tgs.stats, dict) else {}
         raw = stats.get("raw_stats") if isinstance(stats.get("raw_stats"), dict) else {}
 
+        # Prefer standardized values
         pass_att = _to_int(stats.get("pass_att"))
         pass_cmp = _to_int(stats.get("pass_cmp"))
         pass_yds = _to_int(stats.get("pass_yds"))
         completion_pct = _to_float(stats.get("completion_pct"))
 
+        rush_att = _to_int(stats.get("rush_att"))
         rush_yds = _to_int(stats.get("rush_yds"))
-        rush_att = _to_int(_get_any(raw, "rushing_attempts", "rushingattempts"))
 
         total_yds = _to_int(stats.get("total_yds"))
         turnovers = _to_int(stats.get("turnovers"))
         third_down_pct = _to_float(stats.get("third_down_pct"))
         red_zone_td_pct = _to_float(stats.get("red_zone_td_pct"))
 
-        # Sacks: ESPN often provides "sacks-yards lost" as "2-14".
-        sacks_raw = _get_any(raw, "sacks_yards_lost", "sacksyardslost", "sacks")
-        sacks, sacks_yards_lost = _parse_dash_pair(sacks_raw)
+        # ---- KEY FIX: fallback from raw C/ATT if pass_att/pass_cmp missing
+        if (pass_att is None or pass_cmp is None) and raw:
+            ca = _get_any(
+                raw,
+                "c_att",
+                "cmp_att",
+                "comp_att",
+                "completions_attempts",
+                "completion_attempts",
+                "passing_completions_attempts",
+                "pass_completions_attempts",
+            )
+            c, a = _parse_ratio(ca)
+            if pass_cmp is None:
+                pass_cmp = c
+            if pass_att is None:
+                pass_att = a
+
+        if completion_pct is None and pass_cmp is not None and pass_att is not None and pass_att > 0:
+            completion_pct = round((pass_cmp / pass_att) * 100.0, 6)
+
+        # Sacks + yards lost
+        sacks = _to_int(stats.get("sacks"))
+        sacks_yards_lost = _to_int(stats.get("sacks_yards_lost"))
+        if (sacks is None or sacks_yards_lost is None) and raw:
+            sacks_raw = _get_any(raw, "sacks_yards_lost", "sacksyardslost", "sacks_yards", "sacks")
+            s_cnt, s_yl = _parse_ratio(sacks_raw)
+            if sacks is None:
+                sacks = s_cnt
+            if sacks_yards_lost is None:
+                sacks_yards_lost = s_yl
 
         ypa = (pass_yds / pass_att) if (pass_yds is not None and pass_att) else None
         rypa = (rush_yds / rush_att) if (rush_yds is not None and rush_att) else None
+
         pass_rate = (
-            pass_att / (pass_att + rush_att)
-            if (pass_att is not None and rush_att is not None and (pass_att + rush_att) > 0)
+            (pass_att + (sacks or 0)) / ((pass_att + (sacks or 0)) + rush_att)
+            if (pass_att is not None and rush_att is not None and ((pass_att + (sacks or 0)) + rush_att) > 0)
             else None
         )
 
-        # Approx dropbacks = pass_att + sacks (QB scrambles aren't captured, but it's fine for trends)
         sack_rate = (
-            sacks / (pass_att + sacks)
+            (sacks / (pass_att + sacks))
             if (sacks is not None and pass_att is not None and (pass_att + sacks) > 0)
             else None
         )
 
-        # Plays proxy
         plays = None
-        if pass_att is not None and rush_att is not None and sacks is not None:
-            plays = pass_att + rush_att + sacks
+        if pass_att is not None and rush_att is not None:
+            plays = pass_att + rush_att + (sacks or 0)
+
         ypp = (total_yds / plays) if (total_yds is not None and plays and plays > 0) else None
 
         ypa_vals.append(ypa)
@@ -201,8 +224,6 @@ def nfl_in_game_summary(
                 "pf": pf,
                 "pa": pa,
                 "margin": margin,
-
-                # Base
                 "pass_att": pass_att,
                 "pass_cmp": pass_cmp,
                 "pass_yds": pass_yds,
@@ -215,8 +236,6 @@ def nfl_in_game_summary(
                 "red_zone_td_pct": red_zone_td_pct,
                 "sacks": sacks,
                 "sacks_yards_lost": sacks_yards_lost,
-
-                # Derived
                 "ypa": round(ypa, 6) if ypa is not None else None,
                 "rypa": round(rypa, 6) if rypa is not None else None,
                 "pass_rate": round(pass_rate, 6) if pass_rate is not None else None,
@@ -226,7 +245,6 @@ def nfl_in_game_summary(
             }
         )
 
-    # Rolling fields
     for i in range(len(out_rows)):
         ypa_r = roll_mean(ypa_vals, i)
         comp_r = roll_mean(comp_vals, i)
