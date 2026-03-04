@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import time
-from typing import Optional
 
 import sqlalchemy as sa
 
@@ -40,7 +39,13 @@ async def _run_one(game: Game, *, sleep_s: float) -> int:
 
     db = SessionLocal()
     try:
+        if not per_team:
+            print(f"[STATS] game_id={game.id} ext={game.external_game_id} parsed_teams=0", flush=True)
+            return 0
+
         inserted = 0
+        updated = 0
+
         for team_code, stats in per_team.items():
             existing = (
                 db.query(TeamGameStats)
@@ -51,6 +56,7 @@ async def _run_one(game: Game, *, sleep_s: float) -> int:
                 )
                 .one_or_none()
             )
+
             if existing is None:
                 db.add(
                     TeamGameStats(
@@ -69,10 +75,14 @@ async def _run_one(game: Game, *, sleep_s: float) -> int:
                 existing.season_type = game.season_type
                 existing.stats = stats
                 existing.source = "espn_summary"
+                updated += 1
+
         db.commit()
+
         if sleep_s > 0:
             time.sleep(sleep_s)
-        return inserted
+
+        return inserted + updated
     finally:
         db.close()
 
@@ -89,43 +99,41 @@ async def main_async(args) -> None:
         if args.season_type is not None:
             q = q.filter(Game.season_type == args.season_type)
 
-        # Only backfill finished games by default (fewer missing stats/partial)
         if args.only_final:
             q = q.filter(Game.status == "final")
 
         q = q.order_by(Game.game_date.asc().nulls_last(), Game.id.asc())
         games = q.all()
 
-        print(f"[STATS] sport={args.sport} games_found={len(games)} (filters applied)")
-
+        print(f"[STATS] sport={args.sport} games_found={len(games)} (filters applied)", flush=True)
     finally:
         db.close()
 
-    inserted_total = 0
+    touched_total = 0
     processed = 0
 
-    # sequential (safe + simple)
     for g in games:
         processed += 1
+
         db2 = SessionLocal()
         try:
             if args.skip_existing and _already_has_stats(db2, sport=g.sport, game_id=g.id):
-                if processed % 500 == 0:
-                    print(f"[STATS] processed={processed} inserted_total={inserted_total} (skipping existing)")
+                if processed % 50 == 0:
+                    print(f"[STATS] processed={processed}/{len(games)} touched_total={touched_total} (skipping existing)", flush=True)
                 continue
         finally:
             db2.close()
 
         try:
-            ins = await _run_one(g, sleep_s=args.sleep)
-            inserted_total += ins
+            touched = await _run_one(g, sleep_s=args.sleep)
+            touched_total += touched
         except Exception as e:
-            print(f"[STATS] game_id={g.id} ext={g.external_game_id} FAILED: {e}")
+            print(f"[STATS] game_id={g.id} ext={g.external_game_id} FAILED: {e}", flush=True)
 
-        if processed % 200 == 0:
-            print(f"[STATS] processed={processed}/{len(games)} inserted_total={inserted_total}")
+        if processed % 50 == 0:
+            print(f"[STATS] processed={processed}/{len(games)} touched_total={touched_total}", flush=True)
 
-    print(f"[STATS] DONE sport={args.sport} processed={processed} inserted_total={inserted_total}")
+    print(f"[STATS] DONE sport={args.sport} processed={processed} touched_total={touched_total}", flush=True)
 
 
 def main() -> None:

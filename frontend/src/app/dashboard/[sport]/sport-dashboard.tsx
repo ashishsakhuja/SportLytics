@@ -18,6 +18,7 @@ import {
 } from "recharts";
 
 import { apiGet } from "@/lib/api";
+import NflInGameAnalytics from "@/components/NflInGameAnalytics";
 
 const SUPPORTED = new Set(["nfl", "nba", "mlb", "nhl"]);
 const SPORT_LABEL: Record<string, string> = {
@@ -380,6 +381,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
   const [season, setSeason] = useState<number>(DEFAULT_SEASON);
   const [seasonType, setSeasonType] = useState<string>(DEFAULT_SEASON_TYPE);
   const [team, setTeam] = useState<string>("");
+  const [showInGame, setShowInGame] = useState<boolean>(false);
 
   const [teams, setTeams] = useState<TeamsResp | null>(null);
   const [standings, setStandings] = useState<StandingsResp | null>(null);
@@ -738,6 +740,21 @@ export default function SportDashboard({ sport }: { sport: string }) {
                 </option>
               ))}
             </select>
+
+            {s === "nfl" ? (
+              <button
+                onClick={() => setShowInGame((v) => !v)}
+                className={
+                  "ml-1 rounded-xl border px-3 py-2 text-xs transition " +
+                  (showInGame
+                    ? "border-white/30 bg-white/10 text-white"
+                    : "border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20")
+                }
+                title="Toggle NFL in-game (boxscore) analytics"
+              >
+                {showInGame ? "Hide In-Game" : "Show In-Game"}
+              </button>
+            ) : null}
           </div>
         </div>
       </header>
@@ -1023,6 +1040,17 @@ export default function SportDashboard({ sport }: { sport: string }) {
                       />
                     ) : null}
                   </section>
+
+                  {/* NFL In-Game Analytics (toggle) */}
+                  {s === "nfl" && showInGame ? (
+                    <NflInGameAnalytics
+                      sport={s}
+                      team={team}
+                      season={season}
+                      seasonType={seasonType}
+                      cardClass={cardClass}
+                    />
+                  ) : null}
 
                   {/* Standings */}
                   <section className={cardClass}>
