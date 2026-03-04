@@ -187,289 +187,523 @@ export default function NflInGameAnalytics({
     );
   }
 
+  // NOTE: This component intentionally returns multiple <section> cards,
+  // so SportDashboard shows these charts in separate boxes like the other plots.
   return (
-    <section className={cardClass}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold">NFL In-Game Analytics</h2>
-          <div className="mt-1 text-xs text-white/60">
-            Boxscore/advanced stats per game • derived rates + rolling trends
+    <>
+      {/* Header card */}
+      <section className={cardClass}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold">NFL In-Game Analytics</h2>
+            <div className="mt-1 text-xs text-white/60">
+              Boxscore/advanced stats per game • derived rates + rolling trends
+            </div>
           </div>
+
+          {summary ? (
+            <div className="text-right text-[11px] text-white/60 leading-relaxed">
+              <div>{summary.games} games</div>
+              <div>Last 5 YPA: {summary.ypa_last5?.toFixed(2) ?? "n/a"}</div>
+              <div>Last 5 Pass Rate: {pct(summary.pass_rate_last5)}</div>
+              <div>Last 5 Sack Rate: {pct(summary.sack_rate_last5)}</div>
+              <div>Last 5 TO: {summary.turnovers_last5?.toFixed(2) ?? "n/a"}</div>
+            </div>
+          ) : null}
         </div>
 
-        {summary ? (
-          <div className="text-right text-[11px] text-white/60 leading-relaxed">
-            <div>{summary.games} games</div>
-            <div>Last 5 YPA: {summary.ypa_last5?.toFixed(2) ?? "n/a"}</div>
-            <div>Last 5 Pass Rate: {pct(summary.pass_rate_last5)}</div>
-            <div>Last 5 Sack Rate: {pct(summary.sack_rate_last5)}</div>
-            <div>Last 5 TO: {summary.turnovers_last5?.toFixed(2) ?? "n/a"}</div>
-          </div>
-        ) : null}
-      </div>
+        <div className="mt-3 text-xs text-white/60">
+          Tip: the roll5 lines are the smooth trend read.
+        </div>
+      </section>
 
-      <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-12">
-        <div className="lg:col-span-6">
-          <div className="text-sm font-semibold">Pass Attempts</div>
-          <div className="mt-3 h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
-                <YAxis tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Tooltip
-                  contentStyle={{
-                    background: "rgba(0,0,0,0.9)",
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    borderRadius: 12,
-                    color: "white",
-                    fontSize: 12,
-                  }}
-                  labelFormatter={(x) => `Game #${x}`}
-                />
-                <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Line type="monotone" dataKey="pass_att" name="pass_att" dot={false} strokeWidth={2.5} />
-              </LineChart>
-            </ResponsiveContainer>
+      {/* Passing volume + rate */}
+      <section className={cardClass}>
+        <div className="text-sm font-semibold">Passing Volume & Rate</div>
+        <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <div className="lg:col-span-6">
+            <div className="text-sm font-semibold">Pass Attempts</div>
+            <div className="mt-3 h-[260px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={rows}
+                  margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                  <XAxis
+                    dataKey="idx"
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
+                  />
+                  <YAxis
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "rgba(0,0,0,0.9)",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      borderRadius: 12,
+                      color: "white",
+                      fontSize: 12,
+                    }}
+                    labelFormatter={(x) => `Game #${x}`}
+                  />
+                  <Legend
+                    wrapperStyle={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontSize: 12,
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="pass_att"
+                    name="pass_att"
+                    dot={false}
+                    strokeWidth={2.5}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="lg:col-span-6">
+            <div className="text-sm font-semibold">
+              Pass Rate (Pass / (Pass + Rush))
+            </div>
+            <div className="mt-3 h-[260px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={rows}
+                  margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                  <XAxis
+                    dataKey="idx"
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
+                  />
+                  <YAxis
+                    domain={[0, 1]}
+                    tickFormatter={(v) => `${Math.round(v * 100)}%`}
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "rgba(0,0,0,0.9)",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      borderRadius: 12,
+                      color: "white",
+                      fontSize: 12,
+                    }}
+                    labelFormatter={(x) => `Game #${x}`}
+                    formatter={(v: any, name: any) => {
+                      if (v == null) return ["n/a", name];
+                      return [`${(Number(v) * 100).toFixed(1)}%`, name];
+                    }}
+                  />
+                  <Legend
+                    wrapperStyle={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontSize: 12,
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="pass_rate"
+                    name="pass_rate"
+                    dot={false}
+                    strokeWidth={2.5}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="pass_rate_roll5"
+                    name="pass_rate (roll5)"
+                    dot={false}
+                    strokeWidth={2}
+                    opacity={0.7}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
+      </section>
 
-        <div className="lg:col-span-6">
-          <div className="text-sm font-semibold">Pass Rate (Pass / (Pass + Rush))</div>
-          <div className="mt-3 h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
-                <YAxis
-                  domain={[0, 1]}
-                  tickFormatter={(v) => `${Math.round(v * 100)}%`}
-                  tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: "rgba(0,0,0,0.9)",
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    borderRadius: 12,
-                    color: "white",
-                    fontSize: 12,
-                  }}
-                  labelFormatter={(x) => `Game #${x}`}
-                  formatter={(v: any, name: any) => {
-                    if (v == null) return ["n/a", name];
-                    return [`${(Number(v) * 100).toFixed(1)}%`, name];
-                  }}
-                />
-                <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Line type="monotone" dataKey="pass_rate" name="pass_rate" dot={false} strokeWidth={2.5} />
-                <Line type="monotone" dataKey="pass_rate_roll5" name="pass_rate (roll5)" dot={false} strokeWidth={2} opacity={0.7} />
-              </LineChart>
-            </ResponsiveContainer>
+      {/* QB efficiency */}
+      <section className={cardClass}>
+        <div className="text-sm font-semibold">QB Efficiency</div>
+        <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <div className="lg:col-span-6">
+            <div className="text-sm font-semibold">
+              Passing Efficiency (Yards / Attempt)
+            </div>
+            <div className="mt-3 h-[260px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={rows}
+                  margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                  <XAxis
+                    dataKey="idx"
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
+                  />
+                  <YAxis
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "rgba(0,0,0,0.9)",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      borderRadius: 12,
+                      color: "white",
+                      fontSize: 12,
+                    }}
+                    labelFormatter={(x) => `Game #${x}`}
+                  />
+                  <Legend
+                    wrapperStyle={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontSize: 12,
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="ypa"
+                    name="ypa"
+                    dot={false}
+                    strokeWidth={2.5}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="ypa_roll5"
+                    name="ypa (roll5)"
+                    dot={false}
+                    strokeWidth={2}
+                    opacity={0.7}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="lg:col-span-6">
+            <div className="text-sm font-semibold">Completion %</div>
+            <div className="mt-3 h-[260px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={rows}
+                  margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                  <XAxis
+                    dataKey="idx"
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    tickFormatter={(v) => `${v}%`}
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "rgba(0,0,0,0.9)",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      borderRadius: 12,
+                      color: "white",
+                      fontSize: 12,
+                    }}
+                    labelFormatter={(x) => `Game #${x}`}
+                    formatter={(v: any, name: any) => {
+                      if (v == null) return ["n/a", name];
+                      return [`${Number(v).toFixed(1)}%`, name];
+                    }}
+                  />
+                  <Legend
+                    wrapperStyle={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontSize: 12,
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="completion_pct"
+                    name="completion_pct"
+                    dot={false}
+                    strokeWidth={2.5}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="comp_roll5"
+                    name="completion (roll5)"
+                    dot={false}
+                    strokeWidth={2}
+                    opacity={0.7}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
+      </section>
 
-        <div className="lg:col-span-6">
-          <div className="text-sm font-semibold">Passing Efficiency (Yards / Attempt)</div>
-          <div className="mt-3 h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
-                <YAxis tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Tooltip
-                  contentStyle={{
-                    background: "rgba(0,0,0,0.9)",
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    borderRadius: 12,
-                    color: "white",
-                    fontSize: 12,
-                  }}
-                  labelFormatter={(x) => `Game #${x}`}
-                />
-                <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Line type="monotone" dataKey="ypa" name="ypa" dot={false} strokeWidth={2.5} />
-                <Line type="monotone" dataKey="ypa_roll5" name="ypa (roll5)" dot={false} strokeWidth={2} opacity={0.7} />
-              </LineChart>
-            </ResponsiveContainer>
+      {/* Pressure + mistakes */}
+      <section className={cardClass}>
+        <div className="text-sm font-semibold">Pressure & Mistakes</div>
+        <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <div className="lg:col-span-6">
+            <div className="text-sm font-semibold">Pressure (Sack Rate)</div>
+            <div className="mt-3 h-[260px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={rows}
+                  margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                  <XAxis
+                    dataKey="idx"
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
+                  />
+                  <YAxis
+                    domain={[0, "dataMax"]}
+                    tickFormatter={(v) => `${Math.round(v * 100)}%`}
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "rgba(0,0,0,0.9)",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      borderRadius: 12,
+                      color: "white",
+                      fontSize: 12,
+                    }}
+                    labelFormatter={(x) => `Game #${x}`}
+                    formatter={(v: any, name: any) => {
+                      if (v == null) return ["n/a", name];
+                      return [`${(Number(v) * 100).toFixed(1)}%`, name];
+                    }}
+                  />
+                  <Legend
+                    wrapperStyle={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontSize: 12,
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="sack_rate"
+                    name="sack_rate"
+                    dot={false}
+                    strokeWidth={2.5}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="sack_rate_roll5"
+                    name="sack_rate (roll5)"
+                    dot={false}
+                    strokeWidth={2}
+                    opacity={0.7}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="lg:col-span-6">
+            <div className="text-sm font-semibold">Turnovers (per game)</div>
+            <div className="mt-3 h-[260px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={rows}
+                  margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                  <XAxis
+                    dataKey="idx"
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
+                  />
+                  <YAxis
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "rgba(0,0,0,0.9)",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      borderRadius: 12,
+                      color: "white",
+                      fontSize: 12,
+                    }}
+                    labelFormatter={(x) => `Game #${x}`}
+                  />
+                  <Legend
+                    wrapperStyle={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontSize: 12,
+                    }}
+                  />
+                  <Bar dataKey="turnovers" name="turnovers" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
+      </section>
 
-        <div className="lg:col-span-6">
-          <div className="text-sm font-semibold">Completion %</div>
-          <div className="mt-3 h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
-                <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Tooltip
-                  contentStyle={{
-                    background: "rgba(0,0,0,0.9)",
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    borderRadius: 12,
-                    color: "white",
-                    fontSize: 12,
-                  }}
-                  labelFormatter={(x) => `Game #${x}`}
-                  formatter={(v: any, name: any) => {
-                    if (v == null) return ["n/a", name];
-                    return [`${Number(v).toFixed(1)}%`, name];
-                  }}
-                />
-                <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Line type="monotone" dataKey="completion_pct" name="completion_pct" dot={false} strokeWidth={2.5} />
-                <Line type="monotone" dataKey="comp_roll5" name="completion (roll5)" dot={false} strokeWidth={2} opacity={0.7} />
-              </LineChart>
-            </ResponsiveContainer>
+      {/* Situational */}
+      <section className={cardClass}>
+        <div className="text-sm font-semibold">
+          Conversion Efficiency (3rd Down & Red Zone TD%)
+        </div>
+        <div className="mt-3 h-[280px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={rows}
+              margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+              <XAxis
+                dataKey="idx"
+                tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
+              />
+              <YAxis
+                domain={[0, 100]}
+                tickFormatter={(v) => `${v}%`}
+                tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: "rgba(0,0,0,0.9)",
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  borderRadius: 12,
+                  color: "white",
+                  fontSize: 12,
+                }}
+                labelFormatter={(x) => `Game #${x}`}
+                formatter={(v: any, name: any) => {
+                  if (v == null) return ["n/a", name];
+                  return [`${Number(v).toFixed(1)}%`, name];
+                }}
+              />
+              <Legend
+                wrapperStyle={{
+                  color: "rgba(255,255,255,0.75)",
+                  fontSize: 12,
+                }}
+              />
+              <Line
+                type="monotone"
+                dataKey="third_down_pct"
+                name="3rd down %"
+                dot={false}
+                strokeWidth={2.5}
+              />
+              <Line
+                type="monotone"
+                dataKey="red_zone_td_pct"
+                name="red zone TD %"
+                dot={false}
+                strokeWidth={2.5}
+                opacity={0.8}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
+      {/* Relationships */}
+      <section className={cardClass}>
+        <div className="text-sm font-semibold">Relationships</div>
+        <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <div className="lg:col-span-6">
+            <div className="text-sm font-semibold">Total Yards vs Points For</div>
+            <div className="mt-3 h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ScatterChart margin={{ top: 18, right: 12, bottom: 10, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                  <XAxis
+                    type="number"
+                    dataKey="x"
+                    name="Total Yards"
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+                  />
+                  <YAxis
+                    type="number"
+                    dataKey="y"
+                    name="Points"
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+                  />
+                  <Tooltip
+                    cursor={{ stroke: "rgba(255,255,255,0.15)" }}
+                    contentStyle={{
+                      background: "rgba(0,0,0,0.9)",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      borderRadius: 12,
+                      color: "white",
+                      fontSize: 12,
+                    }}
+                    labelFormatter={(_, payload: any) =>
+                      payload?.[0]?.payload?.label ?? ""
+                    }
+                  />
+                  <Legend
+                    wrapperStyle={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontSize: 12,
+                    }}
+                  />
+                  <Scatter name="Wins" data={scatterYardsPoints.wins} fill="rgba(34,197,94,0.75)" />
+                  <Scatter name="Losses" data={scatterYardsPoints.losses} fill="rgba(239,68,68,0.75)" />
+                  {scatterYardsPoints.ties.length ? (
+                    <Scatter name="Ties" data={scatterYardsPoints.ties} fill="rgba(255,255,255,0.6)" />
+                  ) : null}
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="mt-2 text-xs text-white/60">
+              Quick read: high yards + low points = red zone / turnover problems.
+            </div>
+          </div>
+
+          <div className="lg:col-span-6">
+            <div className="text-sm font-semibold">Turnovers vs Margin</div>
+            <div className="mt-3 h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ScatterChart margin={{ top: 18, right: 12, bottom: 10, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                  <XAxis
+                    type="number"
+                    dataKey="x"
+                    name="Turnovers"
+                    allowDecimals={false}
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+                  />
+                  <YAxis
+                    type="number"
+                    dataKey="y"
+                    name="Margin"
+                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
+                  />
+                  <Tooltip
+                    cursor={{ stroke: "rgba(255,255,255,0.15)" }}
+                    contentStyle={{
+                      background: "rgba(0,0,0,0.9)",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      borderRadius: 12,
+                      color: "white",
+                      fontSize: 12,
+                    }}
+                    labelFormatter={(_, payload: any) =>
+                      payload?.[0]?.payload?.label ?? ""
+                    }
+                  />
+                  <Scatter name="Games" data={scatterTurnoversMargin} fill="rgba(255,255,255,0.7)" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="mt-2 text-xs text-white/60">
+              Most teams live in a simple rule: fewer turnovers → better margin.
+            </div>
           </div>
         </div>
-
-        <div className="lg:col-span-6">
-          <div className="text-sm font-semibold">Pressure (Sack Rate)</div>
-          <div className="mt-3 h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
-                <YAxis domain={[0, "dataMax"]} tickFormatter={(v) => `${Math.round(v * 100)}%`} tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Tooltip
-                  contentStyle={{
-                    background: "rgba(0,0,0,0.9)",
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    borderRadius: 12,
-                    color: "white",
-                    fontSize: 12,
-                  }}
-                  labelFormatter={(x) => `Game #${x}`}
-                  formatter={(v: any, name: any) => {
-                    if (v == null) return ["n/a", name];
-                    return [`${(Number(v) * 100).toFixed(1)}%`, name];
-                  }}
-                />
-                <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Line type="monotone" dataKey="sack_rate" name="sack_rate" dot={false} strokeWidth={2.5} />
-                <Line type="monotone" dataKey="sack_rate_roll5" name="sack_rate (roll5)" dot={false} strokeWidth={2} opacity={0.7} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="lg:col-span-6">
-          <div className="text-sm font-semibold">Turnovers (per game)</div>
-          <div className="mt-3 h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
-                <YAxis tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Tooltip
-                  contentStyle={{
-                    background: "rgba(0,0,0,0.9)",
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    borderRadius: 12,
-                    color: "white",
-                    fontSize: 12,
-                  }}
-                  labelFormatter={(x) => `Game #${x}`}
-                />
-                <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Bar dataKey="turnovers" name="turnovers" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="lg:col-span-12">
-          <div className="text-sm font-semibold">Conversion Efficiency (3rd Down & Red Zone TD%)</div>
-          <div className="mt-3 h-[280px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
-                <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Tooltip
-                  contentStyle={{
-                    background: "rgba(0,0,0,0.9)",
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    borderRadius: 12,
-                    color: "white",
-                    fontSize: 12,
-                  }}
-                  labelFormatter={(x) => `Game #${x}`}
-                  formatter={(v: any, name: any) => {
-                    if (v == null) return ["n/a", name];
-                    return [`${Number(v).toFixed(1)}%`, name];
-                  }}
-                />
-                <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Line type="monotone" dataKey="third_down_pct" name="3rd down %" dot={false} strokeWidth={2.5} />
-                <Line type="monotone" dataKey="red_zone_td_pct" name="red zone TD %" dot={false} strokeWidth={2.5} opacity={0.8} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="lg:col-span-6">
-          <div className="text-sm font-semibold">Total Yards vs Points For</div>
-          <div className="mt-3 h-[280px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 18, right: 12, bottom: 10, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                <XAxis type="number" dataKey="x" name="Total Yards" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <YAxis type="number" dataKey="y" name="Points" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Tooltip
-                  cursor={{ stroke: "rgba(255,255,255,0.15)" }}
-                  contentStyle={{
-                    background: "rgba(0,0,0,0.9)",
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    borderRadius: 12,
-                    color: "white",
-                    fontSize: 12,
-                  }}
-                  labelFormatter={(_, payload: any) => payload?.[0]?.payload?.label ?? ""}
-                />
-                <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Scatter name="Wins" data={scatterYardsPoints.wins} fill="rgba(34,197,94,0.75)" />
-                <Scatter name="Losses" data={scatterYardsPoints.losses} fill="rgba(239,68,68,0.75)" />
-                {scatterYardsPoints.ties.length ? (
-                  <Scatter name="Ties" data={scatterYardsPoints.ties} fill="rgba(255,255,255,0.6)" />
-                ) : null}
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="mt-2 text-xs text-white/60">
-            Quick read: high yards + low points = red zone / turnover problems.
-          </div>
-        </div>
-
-        <div className="lg:col-span-6">
-          <div className="text-sm font-semibold">Turnovers vs Margin</div>
-          <div className="mt-3 h-[280px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 18, right: 12, bottom: 10, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                <XAxis type="number" dataKey="x" name="Turnovers" allowDecimals={false} tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <YAxis type="number" dataKey="y" name="Margin" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                <Tooltip
-                  cursor={{ stroke: "rgba(255,255,255,0.15)" }}
-                  contentStyle={{
-                    background: "rgba(0,0,0,0.9)",
-                    border: "1px solid rgba(255,255,255,0.15)",
-                    borderRadius: 12,
-                    color: "white",
-                    fontSize: 12,
-                  }}
-                  labelFormatter={(_, payload: any) => payload?.[0]?.payload?.label ?? ""}
-                />
-                <Scatter name="Games" data={scatterTurnoversMargin} fill="rgba(255,255,255,0.7)" />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="mt-2 text-xs text-white/60">
-            Most teams live in a simple rule: fewer turnovers → better margin.
-          </div>
-        </div>
-      </div>
-    </section>
+      </section>
+    </>
   );
 }
