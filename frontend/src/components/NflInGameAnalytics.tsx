@@ -17,6 +17,7 @@ import {
 } from "recharts";
 
 import { apiGet } from "@/lib/api";
+import AIInsightsBox from "@/components/AIInsightsBox";
 
 type Row = {
   idx: number;
@@ -65,6 +66,12 @@ function pct(v: number | null | undefined) {
   return `${(v * 100).toFixed(1)}%`;
 }
 
+function avg(nums: Array<number | null | undefined>) {
+  const clean = nums.filter((x) => typeof x === "number") as number[];
+  if (clean.length === 0) return null;
+  return clean.reduce((a, b) => a + b, 0) / clean.length;
+}
+
 export default function NflInGameAnalytics({
   team,
   season,
@@ -110,22 +117,88 @@ export default function NflInGameAnalytics({
 
   const rows = data?.rows ?? [];
 
-  const summary = useMemo(() => {
+  const overviewSummary = useMemo(() => {
     if (!rows.length) return null;
     const last5 = rows.slice(-5);
-
-    const avg = (xs: Array<number | null>) => {
-      const v = xs.filter((x) => x != null) as number[];
-      if (!v.length) return null;
-      return v.reduce((a, b) => a + b, 0) / v.length;
-    };
-
     return {
       games: rows.length,
-      ypa_last5: avg(last5.map((r) => r.ypa)),
-      pass_rate_last5: avg(last5.map((r) => r.pass_rate)),
-      sack_rate_last5: avg(last5.map((r) => r.sack_rate)),
-      turnovers_last5: avg(last5.map((r) => r.turnovers)),
+      last5_ypa: avg(last5.map((r) => r.ypa)),
+      last5_pass_rate: avg(last5.map((r) => r.pass_rate)),
+      last5_sack_rate: avg(last5.map((r) => r.sack_rate)),
+      last5_turnovers: avg(last5.map((r) => r.turnovers)),
+      last5_third_down: avg(last5.map((r) => r.third_down_pct)),
+      last5_red_zone_td: avg(last5.map((r) => r.red_zone_td_pct)),
+    };
+  }, [rows]);
+
+  const passingSummary = useMemo(() => {
+    if (!rows.length) return null;
+    const last5 = rows.slice(-5);
+    const prev5 = rows.slice(-10, -5);
+    return {
+      games: rows.length,
+      last5_pass_att: avg(last5.map((r) => r.pass_att)),
+      prev5_pass_att: avg(prev5.map((r) => r.pass_att)),
+      last5_pass_rate: avg(last5.map((r) => r.pass_rate)),
+      prev5_pass_rate: avg(prev5.map((r) => r.pass_rate)),
+    };
+  }, [rows]);
+
+  const qbEfficiencySummary = useMemo(() => {
+    if (!rows.length) return null;
+    const last5 = rows.slice(-5);
+    const prev5 = rows.slice(-10, -5);
+    return {
+      games: rows.length,
+      last5_ypa: avg(last5.map((r) => r.ypa)),
+      prev5_ypa: avg(prev5.map((r) => r.ypa)),
+      last5_completion_pct: avg(last5.map((r) => r.completion_pct)),
+      prev5_completion_pct: avg(prev5.map((r) => r.completion_pct)),
+      last5_ypp: avg(last5.map((r) => r.ypp)),
+      prev5_ypp: avg(prev5.map((r) => r.ypp)),
+    };
+  }, [rows]);
+
+  const pressureMistakesSummary = useMemo(() => {
+    if (!rows.length) return null;
+    const last5 = rows.slice(-5);
+    const prev5 = rows.slice(-10, -5);
+    return {
+      games: rows.length,
+      last5_sack_rate: avg(last5.map((r) => r.sack_rate)),
+      prev5_sack_rate: avg(prev5.map((r) => r.sack_rate)),
+      last5_turnovers: avg(last5.map((r) => r.turnovers)),
+      prev5_turnovers: avg(prev5.map((r) => r.turnovers)),
+      last5_margin: avg(last5.map((r) => r.margin)),
+      prev5_margin: avg(prev5.map((r) => r.margin)),
+    };
+  }, [rows]);
+
+  const conversionsSummary = useMemo(() => {
+    if (!rows.length) return null;
+    const last5 = rows.slice(-5);
+    const prev5 = rows.slice(-10, -5);
+    return {
+      games: rows.length,
+      last5_third_down: avg(last5.map((r) => r.third_down_pct)),
+      prev5_third_down: avg(prev5.map((r) => r.third_down_pct)),
+      last5_red_zone_td: avg(last5.map((r) => r.red_zone_td_pct)),
+      prev5_red_zone_td: avg(prev5.map((r) => r.red_zone_td_pct)),
+    };
+  }, [rows]);
+
+  const relationshipsSummary = useMemo(() => {
+    if (!rows.length) return null;
+    const last5 = rows.slice(-5);
+    const prev5 = rows.slice(-10, -5);
+    return {
+      games: rows.length,
+      last5_total_yds: avg(last5.map((r) => r.total_yds)),
+      prev5_total_yds: avg(prev5.map((r) => r.total_yds)),
+      last5_pf: avg(last5.map((r) => r.pf)),
+      prev5_pf: avg(prev5.map((r) => r.pf)),
+      last5_turnovers: avg(last5.map((r) => r.turnovers)),
+      prev5_turnovers: avg(prev5.map((r) => r.turnovers)),
     };
   }, [rows]);
 
@@ -187,11 +260,9 @@ export default function NflInGameAnalytics({
     );
   }
 
-  // NOTE: This component intentionally returns multiple <section> cards,
-  // so SportDashboard shows these charts in separate boxes like the other plots.
   return (
     <>
-      {/* Header card */}
+      {/* Header */}
       <section className={cardClass}>
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -201,13 +272,13 @@ export default function NflInGameAnalytics({
             </div>
           </div>
 
-          {summary ? (
+          {overviewSummary ? (
             <div className="text-right text-[11px] text-white/60 leading-relaxed">
-              <div>{summary.games} games</div>
-              <div>Last 5 YPA: {summary.ypa_last5?.toFixed(2) ?? "n/a"}</div>
-              <div>Last 5 Pass Rate: {pct(summary.pass_rate_last5)}</div>
-              <div>Last 5 Sack Rate: {pct(summary.sack_rate_last5)}</div>
-              <div>Last 5 TO: {summary.turnovers_last5?.toFixed(2) ?? "n/a"}</div>
+              <div>{rows.length} games</div>
+              <div>Last 5 YPA: {overviewSummary.last5_ypa?.toFixed(2) ?? "n/a"}</div>
+              <div>Last 5 Pass Rate: {pct(overviewSummary.last5_pass_rate)}</div>
+              <div>Last 5 Sack Rate: {pct(overviewSummary.last5_sack_rate)}</div>
+              <div>Last 5 TO: {overviewSummary.last5_turnovers?.toFixed(2) ?? "n/a"}</div>
             </div>
           ) : null}
         </div>
@@ -215,6 +286,17 @@ export default function NflInGameAnalytics({
         <div className="mt-3 text-xs text-white/60">
           Tip: the roll5 lines are the smooth trend read.
         </div>
+
+        {overviewSummary ? (
+          <AIInsightsBox
+            chartId="nfl_ingame_overview"
+            sport="nfl"
+            season={season}
+            seasonType={seasonType}
+            team={team}
+            summary={overviewSummary}
+          />
+        ) : null}
       </section>
 
       {/* Passing volume + rate */}
@@ -225,18 +307,10 @@ export default function NflInGameAnalytics({
             <div className="text-sm font-semibold">Pass Attempts</div>
             <div className="mt-3 h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={rows}
-                  margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
-                >
+                <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                  <XAxis
-                    dataKey="idx"
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
-                  />
-                  <YAxis
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
-                  />
+                  <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
+                  <YAxis tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
                   <Tooltip
                     contentStyle={{
                       background: "rgba(0,0,0,0.9)",
@@ -247,39 +321,20 @@ export default function NflInGameAnalytics({
                     }}
                     labelFormatter={(x) => `Game #${x}`}
                   />
-                  <Legend
-                    wrapperStyle={{
-                      color: "rgba(255,255,255,0.75)",
-                      fontSize: 12,
-                    }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="pass_att"
-                    name="pass_att"
-                    dot={false}
-                    strokeWidth={2.5}
-                  />
+                  <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+                  <Line type="monotone" dataKey="pass_att" name="pass_att" dot={false} strokeWidth={2.5} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </div>
 
           <div className="lg:col-span-6">
-            <div className="text-sm font-semibold">
-              Pass Rate (Pass / (Pass + Rush))
-            </div>
+            <div className="text-sm font-semibold">Pass Rate (Pass / (Pass + Rush))</div>
             <div className="mt-3 h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={rows}
-                  margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
-                >
+                <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                  <XAxis
-                    dataKey="idx"
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
-                  />
+                  <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
                   <YAxis
                     domain={[0, 1]}
                     tickFormatter={(v) => `${Math.round(v * 100)}%`}
@@ -299,32 +354,25 @@ export default function NflInGameAnalytics({
                       return [`${(Number(v) * 100).toFixed(1)}%`, name];
                     }}
                   />
-                  <Legend
-                    wrapperStyle={{
-                      color: "rgba(255,255,255,0.75)",
-                      fontSize: 12,
-                    }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="pass_rate"
-                    name="pass_rate"
-                    dot={false}
-                    strokeWidth={2.5}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="pass_rate_roll5"
-                    name="pass_rate (roll5)"
-                    dot={false}
-                    strokeWidth={2}
-                    opacity={0.7}
-                  />
+                  <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+                  <Line type="monotone" dataKey="pass_rate" name="pass_rate" dot={false} strokeWidth={2.5} />
+                  <Line type="monotone" dataKey="pass_rate_roll5" name="pass_rate (roll5)" dot={false} strokeWidth={2} opacity={0.7} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </div>
         </div>
+
+        {passingSummary ? (
+          <AIInsightsBox
+            chartId="nfl_passing"
+            sport="nfl"
+            season={season}
+            seasonType={seasonType}
+            team={team}
+            summary={passingSummary}
+          />
+        ) : null}
       </section>
 
       {/* QB efficiency */}
@@ -332,23 +380,13 @@ export default function NflInGameAnalytics({
         <div className="text-sm font-semibold">QB Efficiency</div>
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
-            <div className="text-sm font-semibold">
-              Passing Efficiency (Yards / Attempt)
-            </div>
+            <div className="text-sm font-semibold">Passing Efficiency (Yards / Attempt)</div>
             <div className="mt-3 h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={rows}
-                  margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
-                >
+                <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                  <XAxis
-                    dataKey="idx"
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
-                  />
-                  <YAxis
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
-                  />
+                  <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
+                  <YAxis tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
                   <Tooltip
                     contentStyle={{
                       background: "rgba(0,0,0,0.9)",
@@ -359,27 +397,9 @@ export default function NflInGameAnalytics({
                     }}
                     labelFormatter={(x) => `Game #${x}`}
                   />
-                  <Legend
-                    wrapperStyle={{
-                      color: "rgba(255,255,255,0.75)",
-                      fontSize: 12,
-                    }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="ypa"
-                    name="ypa"
-                    dot={false}
-                    strokeWidth={2.5}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="ypa_roll5"
-                    name="ypa (roll5)"
-                    dot={false}
-                    strokeWidth={2}
-                    opacity={0.7}
-                  />
+                  <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+                  <Line type="monotone" dataKey="ypa" name="ypa" dot={false} strokeWidth={2.5} />
+                  <Line type="monotone" dataKey="ypa_roll5" name="ypa (roll5)" dot={false} strokeWidth={2} opacity={0.7} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -389,15 +409,9 @@ export default function NflInGameAnalytics({
             <div className="text-sm font-semibold">Completion %</div>
             <div className="mt-3 h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={rows}
-                  margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
-                >
+                <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                  <XAxis
-                    dataKey="idx"
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
-                  />
+                  <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
                   <YAxis
                     domain={[0, 100]}
                     tickFormatter={(v) => `${v}%`}
@@ -417,32 +431,25 @@ export default function NflInGameAnalytics({
                       return [`${Number(v).toFixed(1)}%`, name];
                     }}
                   />
-                  <Legend
-                    wrapperStyle={{
-                      color: "rgba(255,255,255,0.75)",
-                      fontSize: 12,
-                    }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="completion_pct"
-                    name="completion_pct"
-                    dot={false}
-                    strokeWidth={2.5}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="comp_roll5"
-                    name="completion (roll5)"
-                    dot={false}
-                    strokeWidth={2}
-                    opacity={0.7}
-                  />
+                  <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+                  <Line type="monotone" dataKey="completion_pct" name="completion_pct" dot={false} strokeWidth={2.5} />
+                  <Line type="monotone" dataKey="comp_roll5" name="completion (roll5)" dot={false} strokeWidth={2} opacity={0.7} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </div>
         </div>
+
+        {qbEfficiencySummary ? (
+          <AIInsightsBox
+            chartId="nfl_qb_efficiency"
+            sport="nfl"
+            season={season}
+            seasonType={seasonType}
+            team={team}
+            summary={qbEfficiencySummary}
+          />
+        ) : null}
       </section>
 
       {/* Pressure + mistakes */}
@@ -453,15 +460,9 @@ export default function NflInGameAnalytics({
             <div className="text-sm font-semibold">Pressure (Sack Rate)</div>
             <div className="mt-3 h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={rows}
-                  margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
-                >
+                <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                  <XAxis
-                    dataKey="idx"
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
-                  />
+                  <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
                   <YAxis
                     domain={[0, "dataMax"]}
                     tickFormatter={(v) => `${Math.round(v * 100)}%`}
@@ -481,27 +482,9 @@ export default function NflInGameAnalytics({
                       return [`${(Number(v) * 100).toFixed(1)}%`, name];
                     }}
                   />
-                  <Legend
-                    wrapperStyle={{
-                      color: "rgba(255,255,255,0.75)",
-                      fontSize: 12,
-                    }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="sack_rate"
-                    name="sack_rate"
-                    dot={false}
-                    strokeWidth={2.5}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="sack_rate_roll5"
-                    name="sack_rate (roll5)"
-                    dot={false}
-                    strokeWidth={2}
-                    opacity={0.7}
-                  />
+                  <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+                  <Line type="monotone" dataKey="sack_rate" name="sack_rate" dot={false} strokeWidth={2.5} />
+                  <Line type="monotone" dataKey="sack_rate_roll5" name="sack_rate (roll5)" dot={false} strokeWidth={2} opacity={0.7} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -511,18 +494,10 @@ export default function NflInGameAnalytics({
             <div className="text-sm font-semibold">Turnovers (per game)</div>
             <div className="mt-3 h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={rows}
-                  margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
-                >
+                <BarChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                  <XAxis
-                    dataKey="idx"
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
-                  />
-                  <YAxis
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
-                  />
+                  <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
+                  <YAxis tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
                   <Tooltip
                     contentStyle={{
                       background: "rgba(0,0,0,0.9)",
@@ -533,36 +508,34 @@ export default function NflInGameAnalytics({
                     }}
                     labelFormatter={(x) => `Game #${x}`}
                   />
-                  <Legend
-                    wrapperStyle={{
-                      color: "rgba(255,255,255,0.75)",
-                      fontSize: 12,
-                    }}
-                  />
+                  <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
                   <Bar dataKey="turnovers" name="turnovers" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
         </div>
+
+        {pressureMistakesSummary ? (
+          <AIInsightsBox
+            chartId="nfl_pressure_mistakes"
+            sport="nfl"
+            season={season}
+            seasonType={seasonType}
+            team={team}
+            summary={pressureMistakesSummary}
+          />
+        ) : null}
       </section>
 
       {/* Situational */}
       <section className={cardClass}>
-        <div className="text-sm font-semibold">
-          Conversion Efficiency (3rd Down & Red Zone TD%)
-        </div>
+        <div className="text-sm font-semibold">Conversion Efficiency (3rd Down & Red Zone TD%)</div>
         <div className="mt-3 h-[280px]">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={rows}
-              margin={{ top: 18, right: 10, bottom: 10, left: -10 }}
-            >
+            <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
               <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-              <XAxis
-                dataKey="idx"
-                tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }}
-              />
+              <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
               <YAxis
                 domain={[0, 100]}
                 tickFormatter={(v) => `${v}%`}
@@ -582,30 +555,23 @@ export default function NflInGameAnalytics({
                   return [`${Number(v).toFixed(1)}%`, name];
                 }}
               />
-              <Legend
-                wrapperStyle={{
-                  color: "rgba(255,255,255,0.75)",
-                  fontSize: 12,
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey="third_down_pct"
-                name="3rd down %"
-                dot={false}
-                strokeWidth={2.5}
-              />
-              <Line
-                type="monotone"
-                dataKey="red_zone_td_pct"
-                name="red zone TD %"
-                dot={false}
-                strokeWidth={2.5}
-                opacity={0.8}
-              />
+              <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+              <Line type="monotone" dataKey="third_down_pct" name="3rd down %" dot={false} strokeWidth={2.5} />
+              <Line type="monotone" dataKey="red_zone_td_pct" name="red zone TD %" dot={false} strokeWidth={2.5} opacity={0.8} />
             </LineChart>
           </ResponsiveContainer>
         </div>
+
+        {conversionsSummary ? (
+          <AIInsightsBox
+            chartId="nfl_conversions"
+            sport="nfl"
+            season={season}
+            seasonType={seasonType}
+            team={team}
+            summary={conversionsSummary}
+          />
+        ) : null}
       </section>
 
       {/* Relationships */}
@@ -618,18 +584,8 @@ export default function NflInGameAnalytics({
               <ResponsiveContainer width="100%" height="100%">
                 <ScatterChart margin={{ top: 18, right: 12, bottom: 10, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                  <XAxis
-                    type="number"
-                    dataKey="x"
-                    name="Total Yards"
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
-                  />
-                  <YAxis
-                    type="number"
-                    dataKey="y"
-                    name="Points"
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
-                  />
+                  <XAxis type="number" dataKey="x" name="Total Yards" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+                  <YAxis type="number" dataKey="y" name="Points" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
                   <Tooltip
                     cursor={{ stroke: "rgba(255,255,255,0.15)" }}
                     contentStyle={{
@@ -639,16 +595,9 @@ export default function NflInGameAnalytics({
                       color: "white",
                       fontSize: 12,
                     }}
-                    labelFormatter={(_, payload: any) =>
-                      payload?.[0]?.payload?.label ?? ""
-                    }
+                    labelFormatter={(_, payload: any) => payload?.[0]?.payload?.label ?? ""}
                   />
-                  <Legend
-                    wrapperStyle={{
-                      color: "rgba(255,255,255,0.75)",
-                      fontSize: 12,
-                    }}
-                  />
+                  <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
                   <Scatter name="Wins" data={scatterYardsPoints.wins} fill="rgba(34,197,94,0.75)" />
                   <Scatter name="Losses" data={scatterYardsPoints.losses} fill="rgba(239,68,68,0.75)" />
                   {scatterYardsPoints.ties.length ? (
@@ -668,19 +617,8 @@ export default function NflInGameAnalytics({
               <ResponsiveContainer width="100%" height="100%">
                 <ScatterChart margin={{ top: 18, right: 12, bottom: 10, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                  <XAxis
-                    type="number"
-                    dataKey="x"
-                    name="Turnovers"
-                    allowDecimals={false}
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
-                  />
-                  <YAxis
-                    type="number"
-                    dataKey="y"
-                    name="Margin"
-                    tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
-                  />
+                  <XAxis type="number" dataKey="x" name="Turnovers" allowDecimals={false} tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+                  <YAxis type="number" dataKey="y" name="Margin" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
                   <Tooltip
                     cursor={{ stroke: "rgba(255,255,255,0.15)" }}
                     contentStyle={{
@@ -690,9 +628,7 @@ export default function NflInGameAnalytics({
                       color: "white",
                       fontSize: 12,
                     }}
-                    labelFormatter={(_, payload: any) =>
-                      payload?.[0]?.payload?.label ?? ""
-                    }
+                    labelFormatter={(_, payload: any) => payload?.[0]?.payload?.label ?? ""}
                   />
                   <Scatter name="Games" data={scatterTurnoversMargin} fill="rgba(255,255,255,0.7)" />
                 </ScatterChart>
@@ -703,6 +639,17 @@ export default function NflInGameAnalytics({
             </div>
           </div>
         </div>
+
+        {relationshipsSummary ? (
+          <AIInsightsBox
+            chartId="nfl_relationships"
+            sport="nfl"
+            season={season}
+            seasonType={seasonType}
+            team={team}
+            summary={relationshipsSummary}
+          />
+        ) : null}
       </section>
     </>
   );

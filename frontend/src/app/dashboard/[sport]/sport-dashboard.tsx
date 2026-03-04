@@ -667,6 +667,165 @@ export default function SportDashboard({ sport }: { sport: string }) {
     };
   }, [sosSeries, sos]);
 
+
+const aiOffenseDefenseSummary = useMemo(() => {
+  if (!scatterData.length) return null;
+
+  const pf = scatterData.map((d) => d.avg_pf);
+  const pa = scatterData.map((d) => d.avg_pa);
+
+  const pfAvg = avg(pf);
+  const paAvg = avg(pa);
+
+  // Pearson correlation (PF vs PA) to capture "shootout-y" teams/leagues
+  const n = scatterData.length;
+  const meanX = pfAvg ?? 0;
+  const meanY = paAvg ?? 0;
+  let num = 0,
+    dx2 = 0,
+    dy2 = 0;
+
+  for (let i = 0; i < n; i++) {
+    const dx = (pf[i] ?? 0) - meanX;
+    const dy = (pa[i] ?? 0) - meanY;
+    num += dx * dy;
+    dx2 += dx * dx;
+    dy2 += dy * dy;
+  }
+  const corr =
+    dx2 > 0 && dy2 > 0 ? num / Math.sqrt(dx2 * dy2) : null;
+
+  const bestOffense = Math.max(...pf);
+  const bestDefense = Math.min(...pa);
+  const bestMargin = Math.max(...scatterData.map((d) => d.avg_margin ?? 0));
+
+  return {
+    teams: n,
+    pf_avg: pfAvg,
+    pa_avg: paAvg,
+    pf_pa_corr: corr,
+    best_offense_pf: bestOffense,
+    best_defense_pa: bestDefense,
+    best_margin: bestMargin,
+  };
+}, [scatterData]);
+
+const aiStandingsSummary = useMemo(() => {
+  const rows = standings?.standings ?? [];
+  if (!rows.length) return null;
+
+  const leader = rows[0];
+  const teamIdx = rows.findIndex((r) => r.team_code === team);
+
+  return {
+    teams: rows.length,
+    leader_win_pct: leader?.win_pct ?? null,
+    leader_diff: leader?.diff ?? null,
+    selected_rank: teamIdx >= 0 ? teamIdx + 1 : null,
+    selected_win_pct: teamIdx >= 0 ? rows[teamIdx]?.win_pct ?? null : null,
+    selected_diff: teamIdx >= 0 ? rows[teamIdx]?.diff ?? null : null,
+  };
+}, [standings, team]);
+
+const aiLeagueScoringSummary = useMemo(() => {
+  if (!scoringSeries.length) return null;
+  const first = scoringSeries[0]?.avg_total ?? null;
+  const last = scoringSeries[scoringSeries.length - 1]?.avg_total ?? null;
+  const vals = scoringSeries.map((d) => d.avg_total);
+
+  return {
+    buckets: scoringSeries.length,
+    avg_total_first: first,
+    avg_total_last: last,
+    avg_total_change: first != null && last != null ? last - first : null,
+    avg_total_min: Math.min(...(vals.filter((v) => typeof v === "number") as number[])),
+    avg_total_max: Math.max(...(vals.filter((v) => typeof v === "number") as number[])),
+  };
+}, [scoringSeries]);
+
+const aiHomeAwaySummary = useMemo(() => {
+  if (!splits) return null;
+  return {
+    home_gp: splits.home.gp,
+    away_gp: splits.away.gp,
+    home_avg_pf: splits.home.avg_pf,
+    home_avg_pa: splits.home.avg_pa,
+    home_avg_margin: splits.home.avg_margin,
+    away_avg_pf: splits.away.avg_pf,
+    away_avg_pa: splits.away.avg_pa,
+    away_avg_margin: splits.away.avg_margin,
+    margin_gap_home_minus_away: splits.home.avg_margin - splits.away.avg_margin,
+  };
+}, [splits]);
+
+const aiMarginSummary = useMemo(() => {
+  if (!formSeries.length) return null;
+  const margins = formSeries.map((g) => g.margin);
+  const absMargins = margins.map((m) => Math.abs(m));
+  const close7 = absMargins.filter((m) => m <= 7).length;
+  const blowout = Math.max(...absMargins);
+
+  const last5 = formSeries.slice(-5);
+  return {
+    games: formSeries.length,
+    margin_avg: avg(margins),
+    close_rate_7: formSeries.length ? close7 / formSeries.length : null,
+    biggest_blowout_abs: blowout,
+    last5_margin_avg: avg(last5.map((g) => g.margin)),
+  };
+}, [formSeries]);
+
+const aiCloseGamesSummary = useMemo(() => {
+  if (!formSeries.length) return null;
+  const bars = closeGamesBars(formSeries.map((d) => ({ margin: d.margin, result: d.result })));
+  const le7 = bars.find((b) => b.bucket === "≤ 7");
+  const le3 = bars.find((b) => b.bucket === "≤ 3");
+  return {
+    games: formSeries.length,
+    le3_wins: le3?.wins ?? 0,
+    le3_losses: le3?.losses ?? 0,
+    le7_wins: le7?.wins ?? 0,
+    le7_losses: le7?.losses ?? 0,
+  };
+}, [formSeries]);
+
+const aiScoreDistributionSummary = useMemo(() => {
+  if (!scoreDist || !scoreDist.bins?.length) return null;
+
+  const bins = scoreDist.bins;
+  const counts = scoreDist.counts ?? [];
+  const n = scoreDist.n ?? counts.reduce((a, b) => a + b, 0);
+
+  // Approximate mean using bin midpoints
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < bins.length; i++) {
+    const low = bins[i];
+    const high = bins[i + 1] ?? (low + (bins[i] - (bins[i - 1] ?? low - 1)));
+    const mid = (low + high) / 2;
+    const c = counts[i] ?? 0;
+    num += mid * c;
+    den += c;
+  }
+  const meanApprox = den > 0 ? num / den : null;
+
+  // Mode bin
+  let modeIdx = 0;
+  for (let i = 1; i < counts.length; i++) {
+    if ((counts[i] ?? 0) > (counts[modeIdx] ?? 0)) modeIdx = i;
+  }
+
+  return {
+    n,
+    min: scoreDist.min,
+    max: scoreDist.max,
+    mean_approx: meanApprox,
+    mode_bin_low: bins[modeIdx] ?? null,
+    mode_bin_count: counts[modeIdx] ?? null,
+  };
+}, [scoreDist]);
+
+
   if (!SUPPORTED.has(s)) {
     return (
       <main className="min-h-screen bg-black text-white px-6 py-8">
@@ -951,8 +1110,19 @@ export default function SportDashboard({ sport }: { sport: string }) {
                       </ResponsiveContainer>
                     </div>
                     <div className="mt-3 text-xs text-white/60">
-                      Tip: bottom-right = elite (high for, low against).
-                    </div>
+  Tip: bottom-right = elite (high for, low against).
+</div>
+
+{aiOffenseDefenseSummary ? (
+  <AIInsightsBox
+    chartId="offense_vs_defense"
+    sport={s}
+    season={season}
+    seasonType={seasonType}
+    team={team}
+    summary={aiOffenseDefenseSummary}
+  />
+) : null}
                   </section>
 
                   {/* Rolling Averages */}
@@ -1050,69 +1220,7 @@ export default function SportDashboard({ sport }: { sport: string }) {
                       seasonType={seasonType}
                       cardClass={cardClass}
                     />
-                  ) : null}
-
-                  {/* Standings */}
-                  <section className={cardClass}>
-                    <div className="flex items-center justify-between">
-                      <h2 className="text-base font-semibold">Standings</h2>
-                      <div className="text-xs text-white/60">
-                        {standings?.season} {standings?.season_type}
-                      </div>
-                    </div>
-                    <div className="mt-4 overflow-auto">
-                      <table className="w-full text-sm">
-                        <thead className="text-white/60">
-                          <tr className="border-b border-white/10">
-                            <th className="py-2 text-left font-semibold">Team</th>
-                            <th className="py-2 text-right font-semibold">
-                              W-L-T
-                            </th>
-                            <th className="py-2 text-right font-semibold">PF</th>
-                            <th className="py-2 text-right font-semibold">PA</th>
-                            <th className="py-2 text-right font-semibold">Diff</th>
-                            <th className="py-2 text-right font-semibold">Win%</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(standings?.standings ?? []).slice(0, 16).map((r) => (
-                            <tr
-                              key={r.team_code}
-                              className="border-b border-white/5 hover:bg-white/5"
-                            >
-                              <td className="py-2 pr-2">
-                                <div className="font-semibold">{r.team_code}</div>
-                                <div className="text-[11px] text-white/60">
-                                  {niceTeamLabel(r)}
-                                </div>
-                              </td>
-                              <td className="py-2 text-right tabular-nums">
-                                {r.w}-{r.l}-{r.t}
-                              </td>
-                              <td className="py-2 text-right tabular-nums">
-                                {r.pf}
-                              </td>
-                              <td className="py-2 text-right tabular-nums">
-                                {r.pa}
-                              </td>
-                              <td className="py-2 text-right tabular-nums">
-                                {r.diff}
-                              </td>
-                              <td className="py-2 text-right tabular-nums">
-                                {(r.win_pct * 100).toFixed(1)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="mt-3 text-xs text-white/60">
-                      (Top 16 shown.) Next: division/conference grouping + playoff
-                      cutlines.
-                    </div>
-                  </section>
-
-                  {/* League Scoring Trend */}
+                  ) : null}                  {/* League Scoring Trend */}
                   <section className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
@@ -1180,11 +1288,213 @@ export default function SportDashboard({ sport }: { sport: string }) {
                         </ResponsiveContainer>
                       )}
                     </div>
+
+{aiLeagueScoringSummary ? (
+  <AIInsightsBox
+    chartId="league_scoring_trend"
+    sport={s}
+    season={season}
+    seasonType={seasonType}
+    team={team}
+    summary={aiLeagueScoringSummary}
+  />
+) : null}
+
+</section>
+{/* Standings */}
+                  <section className={cardClass}>
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-base font-semibold">Standings</h2>
+                      <div className="text-xs text-white/60">
+                        {standings?.season} {standings?.season_type}
+                      </div>
+                    </div>
+                    <div className="mt-4 overflow-auto">
+                      <table className="w-full text-sm">
+                        <thead className="text-white/60">
+                          <tr className="border-b border-white/10">
+                            <th className="py-2 text-left font-semibold">Team</th>
+                            <th className="py-2 text-right font-semibold">
+                              W-L-T
+                            </th>
+                            <th className="py-2 text-right font-semibold">PF</th>
+                            <th className="py-2 text-right font-semibold">PA</th>
+                            <th className="py-2 text-right font-semibold">Diff</th>
+                            <th className="py-2 text-right font-semibold">Win%</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(standings?.standings ?? []).slice(0, 16).map((r) => (
+                            <tr
+                              key={r.team_code}
+                              className="border-b border-white/5 hover:bg-white/5"
+                            >
+                              <td className="py-2 pr-2">
+                                <div className="font-semibold">{r.team_code}</div>
+                                <div className="text-[11px] text-white/60">
+                                  {niceTeamLabel(r)}
+                                </div>
+                              </td>
+                              <td className="py-2 text-right tabular-nums">
+                                {r.w}-{r.l}-{r.t}
+                              </td>
+                              <td className="py-2 text-right tabular-nums">
+                                {r.pf}
+                              </td>
+                              <td className="py-2 text-right tabular-nums">
+                                {r.pa}
+                              </td>
+                              <td className="py-2 text-right tabular-nums">
+                                {r.diff}
+                              </td>
+                              <td className="py-2 text-right tabular-nums">
+                                {(r.win_pct * 100).toFixed(1)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="mt-3 text-xs text-white/60">
+                      (Top 16 shown.) Next: division/conference grouping + playoff
+                      cutlines.
+                    </div>
+
+{aiStandingsSummary ? (
+  <AIInsightsBox
+    chartId="standings"
+    sport={s}
+    season={season}
+    seasonType={seasonType}
+    team={team}
+    summary={aiStandingsSummary}
+  />
+) : null}
+
+</section>
+
+
+{/* SOS */}
+                  <section className={cardClass}>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <h2 className="text-base font-semibold">
+                        Strength of Schedule (Opponent Win%)
+                      </h2>
+                      <div className="text-xs text-white/60">
+                        avg{" "}
+                        {(sos?.sos_avg ?? 0) * 100 > 0
+                          ? `${((sos?.sos_avg ?? 0) * 100).toFixed(1)}%`
+                          : "—"}
+                      </div>
+                    </div>
+                    <div className="mt-3 text-xs text-white/60">
+                      True SOS using opponents’ win% for {season} {seasonType}.
+                    </div>
+
+                    <div className="mt-4 h-[260px]">
+                      {sosSeries.length === 0 ? (
+                        <div className="text-sm text-white/60">
+                          No SOS data yet.
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart
+                            data={sosSeries}
+                            margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                            <XAxis
+                              dataKey="idx"
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 11,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                            />
+                            <YAxis
+                              domain={[0, 1]}
+                              tick={{
+                                fill: "rgba(255,255,255,0.75)",
+                                fontSize: 12,
+                              }}
+                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                              tickFormatter={(v) => `${Math.round(v * 100)}%`}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                background: "rgba(0,0,0,0.9)",
+                                border: "1px solid rgba(255,255,255,0.15)",
+                                borderRadius: 12,
+                                color: "white",
+                              }}
+                              labelFormatter={(label: any) => `Game ${label}`}
+                              formatter={(val: any, key: any, payload: any) => {
+                                const p = payload?.payload;
+                                if (!p) return [val, key];
+                                const pct =
+                                  typeof val === "number"
+                                    ? `${(val * 100).toFixed(1)}%`
+                                    : val;
+                                const sub = `${p.opponent} (${p.home_away}) ${p.result}`;
+                                return [pct, `${key} • ${sub}`];
+                              }}
+                            />
+                            <Legend
+                              verticalAlign="top"
+                              height={20}
+                              iconSize={8}
+                              wrapperStyle={{
+                                fontSize: 12,
+                                color: "rgba(255,255,255,0.75)",
+                              }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="opp_win_pct"
+                              name="Opponent win%"
+                              stroke="rgba(255,255,255,0.45)"
+                              dot={false}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="sos_cum"
+                              name="SOS (cumulative)"
+                              stroke="rgba(255,255,255,0.85)"
+                              dot={false}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="sos_roll5"
+                              name="SOS (roll5)"
+                              stroke="rgba(255,255,255,0.65)"
+                              dot={false}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+
+                    {aiSosSummary ? (
+                      <AIInsightsBox
+                        chartId="sos"
+                        sport={s}
+                        season={season}
+                        seasonType={seasonType}
+                        team={team}
+                        summary={aiSosSummary}
+                      />
+                    ) : null}
                   </section>
+
+
                 </div>
 
                 {/* RIGHT PLOTS COLUMN */}
                 <div className="lg:col-span-5 flex flex-col gap-6">
+
+
                   {/* Recent Form */}
                   <section className={cardClass}>
                     <div className="flex items-center justify-between">
@@ -1340,7 +1650,19 @@ export default function SportDashboard({ sport }: { sport: string }) {
                         </ResponsiveContainer>
                       )}
                     </div>
-                  </section>
+
+{aiHomeAwaySummary ? (
+  <AIInsightsBox
+    chartId="home_away_splits"
+    sport={s}
+    season={season}
+    seasonType={seasonType}
+    team={team}
+    summary={aiHomeAwaySummary}
+  />
+) : null}
+
+</section>
 
                   {/* Margin Histogram */}
                   <section className={cardClass}>
@@ -1399,7 +1721,19 @@ export default function SportDashboard({ sport }: { sport: string }) {
                         </ResponsiveContainer>
                       )}
                     </div>
-                  </section>
+
+{aiMarginSummary ? (
+  <AIInsightsBox
+    chartId="margin_histogram"
+    sport={s}
+    season={season}
+    seasonType={seasonType}
+    team={team}
+    summary={aiMarginSummary}
+  />
+) : null}
+
+</section>
 
                   {/* Close Games */}
                   <section className={cardClass}>
@@ -1474,121 +1808,19 @@ export default function SportDashboard({ sport }: { sport: string }) {
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
-                  </section>
 
-                  {/* SOS */}
-                  <section className={cardClass}>
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <h2 className="text-base font-semibold">
-                        Strength of Schedule (Opponent Win%)
-                      </h2>
-                      <div className="text-xs text-white/60">
-                        avg{" "}
-                        {(sos?.sos_avg ?? 0) * 100 > 0
-                          ? `${((sos?.sos_avg ?? 0) * 100).toFixed(1)}%`
-                          : "—"}
-                      </div>
-                    </div>
-                    <div className="mt-3 text-xs text-white/60">
-                      True SOS using opponents’ win% for {season} {seasonType}.
-                    </div>
+{aiCloseGamesSummary ? (
+  <AIInsightsBox
+    chartId="close_games"
+    sport={s}
+    season={season}
+    seasonType={seasonType}
+    team={team}
+    summary={aiCloseGamesSummary}
+  />
+) : null}
 
-                    <div className="mt-4 h-[260px]">
-                      {sosSeries.length === 0 ? (
-                        <div className="text-sm text-white/60">
-                          No SOS data yet.
-                        </div>
-                      ) : (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart
-                            data={sosSeries}
-                            margin={{ top: 28, right: 10, bottom: 10, left: -10 }}
-                          >
-                            <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                            <XAxis
-                              dataKey="idx"
-                              tick={{
-                                fill: "rgba(255,255,255,0.75)",
-                                fontSize: 11,
-                              }}
-                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                            />
-                            <YAxis
-                              domain={[0, 1]}
-                              tick={{
-                                fill: "rgba(255,255,255,0.75)",
-                                fontSize: 12,
-                              }}
-                              axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                              tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
-                              tickFormatter={(v) => `${Math.round(v * 100)}%`}
-                            />
-                            <Tooltip
-                              contentStyle={{
-                                background: "rgba(0,0,0,0.9)",
-                                border: "1px solid rgba(255,255,255,0.15)",
-                                borderRadius: 12,
-                                color: "white",
-                              }}
-                              labelFormatter={(label: any) => `Game ${label}`}
-                              formatter={(val: any, key: any, payload: any) => {
-                                const p = payload?.payload;
-                                if (!p) return [val, key];
-                                const pct =
-                                  typeof val === "number"
-                                    ? `${(val * 100).toFixed(1)}%`
-                                    : val;
-                                const sub = `${p.opponent} (${p.home_away}) ${p.result}`;
-                                return [pct, `${key} • ${sub}`];
-                              }}
-                            />
-                            <Legend
-                              verticalAlign="top"
-                              height={20}
-                              iconSize={8}
-                              wrapperStyle={{
-                                fontSize: 12,
-                                color: "rgba(255,255,255,0.75)",
-                              }}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="opp_win_pct"
-                              name="Opponent win%"
-                              stroke="rgba(255,255,255,0.45)"
-                              dot={false}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="sos_cum"
-                              name="SOS (cumulative)"
-                              stroke="rgba(255,255,255,0.85)"
-                              dot={false}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="sos_roll5"
-                              name="SOS (roll5)"
-                              stroke="rgba(255,255,255,0.65)"
-                              dot={false}
-                            />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      )}
-                    </div>
-
-                    {aiSosSummary ? (
-                      <AIInsightsBox
-                        chartId="sos"
-                        sport={s}
-                        season={season}
-                        seasonType={seasonType}
-                        team={team}
-                        summary={aiSosSummary}
-                      />
-                    ) : null}
-                  </section>
+</section>
 
                   {/* League Score Distribution */}
                   <section className={cardClass}>
@@ -1647,7 +1879,19 @@ export default function SportDashboard({ sport }: { sport: string }) {
                         </ResponsiveContainer>
                       )}
                     </div>
-                  </section>
+
+{aiScoreDistributionSummary ? (
+  <AIInsightsBox
+    chartId="score_distribution"
+    sport={s}
+    season={season}
+    seasonType={seasonType}
+    team={team}
+    summary={aiScoreDistributionSummary}
+  />
+) : null}
+
+</section>
                 </div>
               </div>
             </div>
