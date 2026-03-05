@@ -287,7 +287,11 @@ def _standardize_nfl(raw: Dict[str, Any]) -> Dict[str, Any]:
 def _standardize_nba(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Standardize NBA team boxscore stats across ESPN naming inconsistencies.
 
-    Output fields are compact + numeric so the frontend can compute derived metrics.
+    In your stored ESPN raw_stats, keys like 'fg', '3p', 'ft' are *percentages* (e.g. "55"),
+    while made/attempts appear under long combined keys like:
+      - fieldgoalsmade_fieldgoalsattempted: "46-84"
+      - threepointfieldgoalsmade_threepointfieldgoalsattempted: "22-40"
+      - freethrowsmade_freethrowsattempted: "12-17"
     """
 
     def g(*keys: str) -> Any:
@@ -296,86 +300,117 @@ def _standardize_nba(raw: Dict[str, Any]) -> Dict[str, Any]:
                 return raw.get(k)
         return None
 
+    def pick_int(*keys: str) -> Optional[int]:
+        return _safe_int(g(*keys))
+
     out: Dict[str, Any] = {}
 
-    # Shooting (made/attempts)
-    fg = g(
-        "fg",
-        "field_goals",
-        "fieldgoals",
+    # -------------------------
+    # Made / Attempted strings
+    # -------------------------
+
+    fg_ma = g(
+        # YOUR DB KEY
+        "fieldgoalsmade_fieldgoalsattempted",
+        # common alternates (keep, harmless)
         "field_goals_made_attempted",
         "field_goals_made_attempts",
         "fgm_fga",
         "fgm_a",
     )
-    if fg:
-        m, a = _parse_made_attempts(fg)
+    if fg_ma:
+        m, a = _parse_made_attempts(fg_ma)
         if m is not None:
             out["fg_m"] = m
         if a is not None:
             out["fg_a"] = a
 
-    tp = g(
-        "3pt",
-        "3ptfg",
-        "3ptfgs",
-        "three_point_field_goals",
+    tp_ma = g(
+        # YOUR DB KEY
+        "threepointfieldgoalsmade_threepointfieldgoalsattempted",
+        # common alternates
         "three_point_field_goals_made_attempted",
-        "three_point",
+        "three_point_field_goals_made_attempts",
         "3pm_3pa",
         "3pm_a",
+        "tpm_tpa",
     )
-    if tp:
-        m, a = _parse_made_attempts(tp)
+    if tp_ma:
+        m, a = _parse_made_attempts(tp_ma)
         if m is not None:
             out["tp_m"] = m
         if a is not None:
             out["tp_a"] = a
 
-    ft = g(
-        "ft",
-        "free_throws",
-        "freethrows",
+    ft_ma = g(
+        # YOUR DB KEY
+        "freethrowsmade_freethrowsattempted",
+        # common alternates
         "free_throws_made_attempted",
+        "free_throws_made_attempts",
         "ftm_fta",
         "ftm_a",
     )
-    if ft:
-        m, a = _parse_made_attempts(ft)
+    if ft_ma:
+        m, a = _parse_made_attempts(ft_ma)
         if m is not None:
             out["ft_m"] = m
         if a is not None:
             out["ft_a"] = a
 
-    # Percentages (fallback to computed)
-    out["fg_pct"] = _safe_float(
-        g("fg%", "fg_pct", "field_goal_pct", "field_goals_pct", "field_goal_percentage")
-    )
-    out["tp_pct"] = _safe_float(g("3pt%", "3pt_pct", "three_point_pct", "three_point_percentage"))
-    out["ft_pct"] = _safe_float(g("ft%", "ft_pct", "free_throw_pct", "free_throw_percentage"))
+    # -------------------------
+    # Split-field fallbacks
+    # -------------------------
+    if out.get("fg_m") is None:
+        out["fg_m"] = pick_int("fgm", "field_goals_made", "fieldgoalsmade")
+    if out.get("fg_a") is None:
+        out["fg_a"] = pick_int("fga", "field_goals_attempted", "field_goals_attempts", "fieldgoalsattempted")
 
+    if out.get("tp_m") is None:
+        out["tp_m"] = pick_int("3pm", "three_point_field_goals_made", "threepointfieldgoalsmade")
+    if out.get("tp_a") is None:
+        out["tp_a"] = pick_int("3pa", "three_point_field_goals_attempted", "three_point_field_goals_attempts", "threepointfieldgoalsattempted")
+
+    if out.get("ft_m") is None:
+        out["ft_m"] = pick_int("ftm", "free_throws_made", "freethrowsmade")
+    if out.get("ft_a") is None:
+        out["ft_a"] = pick_int("fta", "free_throws_attempted", "free_throws_attempts", "freethrowsattempted")
+
+    # -------------------------
+    # Percentages
+    # IMPORTANT: in your DB, 'fg'/'3p'/'ft' are percentages, not makes/attempts.
+    # -------------------------
+    out["fg_pct"] = _safe_float(g("fieldgoalpct", "fg_pct", "field_goal_pct", "field_goal_percentage", "fg"))
+    out["tp_pct"] = _safe_float(g("threepointfieldgoalpct", "3pt_pct", "three_point_pct", "three_point_percentage", "3p"))
+    out["ft_pct"] = _safe_float(g("freethrowpct", "ft_pct", "free_throw_pct", "free_throw_percentage", "ft"))
+
+    # Compute pct from makes/attempts if pct missing
     if out.get("fg_pct") is None and out.get("fg_m") is not None and out.get("fg_a"):
         a = out["fg_a"]
         if a and a > 0:
             out["fg_pct"] = round((out["fg_m"] / a) * 100.0, 6)
+
     if out.get("tp_pct") is None and out.get("tp_m") is not None and out.get("tp_a"):
         a = out["tp_a"]
         if a and a > 0:
             out["tp_pct"] = round((out["tp_m"] / a) * 100.0, 6)
+
     if out.get("ft_pct") is None and out.get("ft_m") is not None and out.get("ft_a"):
         a = out["ft_a"]
         if a and a > 0:
             out["ft_pct"] = round((out["ft_m"] / a) * 100.0, 6)
 
+    # -------------------------
     # Counting stats
-    out["oreb"] = _safe_int(g("off_reb", "offensive_rebounds", "oreb", "or"))
-    out["dreb"] = _safe_int(g("def_reb", "defensive_rebounds", "dreb", "dr"))
-    out["reb"] = _safe_int(g("reb", "rebound", "rebounds", "trb", "total_rebounds"))
-    out["ast"] = _safe_int(g("ast", "assists", "assist"))
-    out["tov"] = _safe_int(g("to", "tov", "turnovers", "turnover"))
-    out["stl"] = _safe_int(g("stl", "steals", "steal"))
-    out["blk"] = _safe_int(g("blk", "blocks", "block"))
-    out["pf"] = _safe_int(g("pf", "personal_fouls", "fouls"))
+    # -------------------------
+    out["oreb"] = _safe_int(g("offensiverebounds", "off_reb", "oreb", "or"))
+    out["dreb"] = _safe_int(g("defensiverebounds", "def_reb", "dreb", "dr"))
+    out["reb"] = _safe_int(g("totalrebounds", "total_rebounds", "reb", "rebounds"))
+    out["ast"] = _safe_int(g("assists", "ast"))
+    out["tov"] = _safe_int(g("turnovers", "to", "tov"))
+    out["stl"] = _safe_int(g("steals", "stl"))
+    out["blk"] = _safe_int(g("blocks", "blk"))
+    out["pfouls"] = _safe_int(g("fouls", "pf", "personal_fouls"))
 
     # Possessions estimate: Poss ≈ FGA + 0.44*FTA - OREB + TOV
     fga = out.get("fg_a")
@@ -388,7 +423,6 @@ def _standardize_nba(raw: Dict[str, Any]) -> Dict[str, Any]:
             out["possessions_est"] = round(poss, 6)
 
     return {k: v for k, v in out.items() if v is not None}
-
 
 def _standardize_common(*, sport: str, raw: Dict[str, Any]) -> Dict[str, Any]:
     sport = (sport or "").lower().strip()
