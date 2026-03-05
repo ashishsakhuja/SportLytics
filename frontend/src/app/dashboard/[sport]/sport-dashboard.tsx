@@ -19,6 +19,7 @@ import {
 
 import { apiGet } from "@/lib/api";
 import NflInGameAnalytics from "@/components/NflInGameAnalytics";
+import NbaInGameAnalytics from "@/components/NbaInGameAnalytics";
 
 const SUPPORTED = new Set(["nfl", "nba", "mlb", "nhl"]);
 const SPORT_LABEL: Record<string, string> = {
@@ -900,7 +901,7 @@ const aiScoreDistributionSummary = useMemo(() => {
               ))}
             </select>
 
-            {s === "nfl" ? (
+            {s === "nfl" || s === "nba" ? (
               <button
                 onClick={() => setShowInGame((v) => !v)}
                 className={
@@ -909,7 +910,7 @@ const aiScoreDistributionSummary = useMemo(() => {
                     ? "border-white/30 bg-white/10 text-white"
                     : "border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-white/20")
                 }
-                title="Toggle NFL in-game (boxscore) analytics"
+                title={`Toggle ${s.toUpperCase()} in-game (boxscore) analytics`}
               >
                 {showInGame ? "Hide In-Game" : "Show In-Game"}
               </button>
@@ -1220,7 +1221,21 @@ const aiScoreDistributionSummary = useMemo(() => {
                       seasonType={seasonType}
                       cardClass={cardClass}
                     />
-                  ) : null}                  {/* League Scoring Trend */}
+                  ) : null}
+
+
+                  {/* NBA In-Game Analytics (toggle) */}
+                  {s === "nba" && showInGame ? (
+                    <NbaInGameAnalytics
+                      sport={s}
+                      team={team}
+                      season={season}
+                      seasonType={seasonType}
+                      cardClass={cardClass}
+                    />
+                  ) : null}
+
+                  {/* League Scoring Trend */}
                   <section className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
