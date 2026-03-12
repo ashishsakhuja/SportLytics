@@ -424,12 +424,131 @@ def _standardize_nba(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     return {k: v for k, v in out.items() if v is not None}
 
+def _standardize_nhl(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Standardize NHL team boxscore stats from ESPN summary.
+
+    Safe additive parser:
+    - does not change NFL/NBA behavior
+    - uses the real ESPN NHL keys seen in SportLytics raw_stats
+    """
+
+    def g(*keys: str) -> Any:
+        for k in keys:
+            if k in raw:
+                return raw.get(k)
+        return None
+
+    out: Dict[str, Any] = {}
+
+    # IMPORTANT:
+    # In your ESPN NHL raw_stats:
+    # - "s" / "shotstotal" are the actual shots values
+    # - "sog" is showing up as 0 and should NOT be prioritized
+    out["shots"] = _safe_int(
+        g(
+            "s",
+            "shotstotal",
+            "shots",
+            "totalshots",
+            "total_shots",
+            "shotsongoal",
+            "shots_on_goal",
+            "sog",
+        )
+    )
+
+    out["hits"] = _safe_int(g("hits", "ht"))
+    out["blocked_shots"] = _safe_int(g("blockedshots", "bs", "blocked_shots", "blocks"))
+    out["giveaways"] = _safe_int(g("giveaways", "gv"))
+    out["takeaways"] = _safe_int(g("takeaways", "tk"))
+    out["penalty_minutes"] = _safe_int(g("penaltyminutes", "pim", "penalty_minutes"))
+
+    out["faceoff_pct"] = _safe_float(
+        g(
+            "faceoffpercent",
+            "fo",
+            "faceoffpct",
+            "faceoff_pct",
+            "faceoffwinpct",
+            "faceoff_win_pct",
+            "faceoffpercentage",
+            "face_off_pct",
+            "faceoffs_pct",
+            "faceoffswonpct",
+        )
+    )
+
+    if out.get("faceoff_pct") is None:
+        won = _safe_float(g("faceoffswon", "fw", "faceoffs_won", "faceoff_wins", "faceoffwins"))
+        lost = _safe_float(g("faceoffslost", "faceoffs_lost", "faceoff_losses", "faceofflosses"))
+        taken = _safe_float(g("faceoffstaken", "faceoffs_taken", "totalfaceoffs", "total_faceoffs"))
+
+        if won is not None and taken and taken > 0:
+            out["faceoff_pct"] = round((won / taken) * 100.0, 6)
+        elif won is not None and lost is not None and (won + lost) > 0:
+            out["faceoff_pct"] = round((won / (won + lost)) * 100.0, 6)
+
+    # Power play
+    pp_combo = g(
+        "powerplaygoals_powerplayopportunities",
+        "power_play_goals_power_play_opportunities",
+        "ppg_opps",
+        "ppg_opp",
+        "ppg_opportunities",
+        "powerplay",
+        "power_play",
+    )
+    if pp_combo:
+        made, att = _parse_made_attempts(pp_combo)
+        if made is not None:
+            out["power_play_goals"] = made
+        if att is not None:
+            out["power_play_opportunities"] = att
+
+    if out.get("power_play_goals") is None:
+        out["power_play_goals"] = _safe_int(g("powerplaygoals", "ppg", "power_play_goals"))
+
+    if out.get("power_play_opportunities") is None:
+        out["power_play_opportunities"] = _safe_int(
+            g(
+                "powerplayopportunities",
+                "ppo",
+                "power_play_opportunities",
+                "pp_opportunities",
+            )
+        )
+
+    pp_pct = _safe_float(
+        g(
+            "powerplaypct",
+            "pct",
+            "power_play_pct",
+            "powerplaypercentage",
+            "pp_pct",
+        )
+    )
+    if pp_pct is not None:
+        out["power_play_pct"] = pp_pct
+    elif (
+        out.get("power_play_goals") is not None
+        and out.get("power_play_opportunities") is not None
+        and out["power_play_opportunities"] > 0
+    ):
+        out["power_play_pct"] = round(
+            (out["power_play_goals"] / out["power_play_opportunities"]) * 100.0,
+            6,
+        )
+
+    return {k: v for k, v in out.items() if v is not None}
+
 def _standardize_common(*, sport: str, raw: Dict[str, Any]) -> Dict[str, Any]:
     sport = (sport or "").lower().strip()
     if sport == "nfl":
         return _standardize_nfl(raw)
     if sport == "nba":
         return _standardize_nba(raw)
+    if sport == "nhl":
+        return _standardize_nhl(raw)
     return {}
 
 

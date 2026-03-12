@@ -47,7 +47,6 @@ function autoTip(chartId: string, summary: any): string {
     case "score_distribution":
       return "Skewed right means frequent high totals (pace/offense); left means defensive grind.";
 
-    // NFL in-game
     case "nfl_passing":
       return "Pass rate spikes often reflect game script — check if you were trailing.";
     case "nfl_qb_efficiency":
@@ -58,6 +57,27 @@ function autoTip(chartId: string, summary: any): string {
       return "3rd down and red zone are high leverage — small shifts flip outcomes fast.";
     case "nfl_relationships":
       return "High yards + low points usually means red zone stalls or turnovers.";
+
+    case "nba_shooting":
+      return "3P% is volatile; eFG% and TS% are better ‘true’ efficiency reads.";
+    case "nba_efficiency":
+      return "If eFG% and TS% rise together, it’s usually sustainable offense.";
+    case "nba_ball_movement":
+      return "AST/TOV is a clean proxy for decision quality and shot creation.";
+    case "nba_pace_offense":
+      return "Separate pace from efficiency to explain scoring swings.";
+
+    case "nhl_shot_volume":
+      return "If shots are steady but goals dip, finishing variance may be the story.";
+    case "nhl_special_teams":
+      return "Power-play swings matter fast — compare PP% and penalty minutes together.";
+    case "nhl_puck_battle":
+      return "Faceoffs, hits, and blocks often show whether the team is dictating the game.";
+    case "nhl_possession_discipline":
+      return "Giveaways plus penalties can erase strong even-strength play quickly.";
+    case "nhl_overview":
+      return "Use shots, FO%, PP%, and shooting% together — one stat alone can mislead.";
+
     default:
       return "Use the rolling lines to judge direction, not noise.";
   }
@@ -83,8 +103,6 @@ export default function AIInsightsBox({
 
     async function run() {
       try {
-        // Keep behavior consistent with your existing boxes:
-        // if no data, show the same fallback and avoid calling the endpoint.
         if (!summary || (typeof summary === "object" && Object.keys(summary).length === 0)) {
           setCaption("Not enough data yet.");
           setStatus("ready");
@@ -127,7 +145,6 @@ export default function AIInsightsBox({
     return () => {
       cancelled = true;
     };
-    // IMPORTANT: depend on summaryKey (stable) so we don't refetch every render.
   }, [chartId, sport, season, seasonType, team, summaryKey]);
 
   return (
@@ -140,7 +157,7 @@ export default function AIInsightsBox({
           </div>
         </div>
 
-        <div className="mt-3 text-sm text-white/75 italic leading-relaxed">{caption}</div>
+        <div className="mt-3 text-sm italic leading-relaxed text-white/75">{caption}</div>
 
         <div className="mt-3 text-xs text-white/60">
           <span className="font-semibold text-white/70">Tip:</span> {resolvedTip}
