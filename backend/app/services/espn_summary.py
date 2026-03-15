@@ -541,6 +541,69 @@ def _standardize_nhl(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     return {k: v for k, v in out.items() if v is not None}
 
+def _standardize_mlb(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Standardize MLB team boxscore stats from ESPN summary.
+
+    Safe additive parser:
+    - does not change NFL/NBA/NHL behavior
+    - maps common ESPN MLB batting team-stat keys
+    """
+
+    def g(*keys: str) -> Any:
+        for k in keys:
+            if k in raw:
+                return raw.get(k)
+        return None
+
+    out: Dict[str, Any] = {}
+
+    out["ab"] = _safe_int(g("ab", "atbats", "at_bats"))
+    out["hits"] = _safe_int(g("h", "hits"))
+    out["doubles"] = _safe_int(g("2b", "doubles"))
+    out["triples"] = _safe_int(g("3b", "triples"))
+    out["home_runs"] = _safe_int(g("hr", "homeruns", "home_runs"))
+    out["rbi"] = _safe_int(g("rbi", "runsbattedin", "runs_batted_in"))
+    out["walks"] = _safe_int(g("bb", "walks", "baseonballs"))
+    out["strikeouts"] = _safe_int(g("so", "strikeouts", "strike_outs"))
+    out["stolen_bases"] = _safe_int(g("sb", "stolenbases", "stolen_bases"))
+    out["left_on_base"] = _safe_int(g("lob", "leftonbase", "left_on_base"))
+    out["total_bases"] = _safe_int(g("tb", "totalbases", "total_bases"))
+
+    out["batting_avg"] = _safe_float(g("avg", "battingaverage", "batting_avg"))
+    out["obp"] = _safe_float(g("obp", "onbasepct", "on_base_pct"))
+    out["slg"] = _safe_float(g("slg", "slugavg", "sluggingpct", "slugging_pct"))
+    out["ops"] = _safe_float(g("ops"))
+
+    # Derived fallbacks
+    if out.get("total_bases") is None and out.get("hits") is not None:
+        d = out.get("doubles") or 0
+        t = out.get("triples") or 0
+        hr = out.get("home_runs") or 0
+        singles = out["hits"] - d - t - hr
+        out["total_bases"] = singles + 2 * d + 3 * t + 4 * hr
+
+    ab = out.get("ab")
+    hits = out.get("hits")
+    walks = out.get("walks")
+    tb = out.get("total_bases")
+
+    if out.get("batting_avg") is None and hits is not None and ab and ab > 0:
+        out["batting_avg"] = round(hits / ab, 6)
+
+    if out.get("obp") is None and hits is not None and walks is not None and ab is not None:
+        denom = ab + walks
+        if denom > 0:
+            out["obp"] = round((hits + walks) / denom, 6)
+
+    if out.get("slg") is None and tb is not None and ab and ab > 0:
+        out["slg"] = round(tb / ab, 6)
+
+    if out.get("ops") is None and out.get("obp") is not None and out.get("slg") is not None:
+        out["ops"] = round(out["obp"] + out["slg"], 6)
+
+    return {k: v for k, v in out.items() if v is not None}
+
+
 def _standardize_common(*, sport: str, raw: Dict[str, Any]) -> Dict[str, Any]:
     sport = (sport or "").lower().strip()
     if sport == "nfl":
@@ -549,6 +612,8 @@ def _standardize_common(*, sport: str, raw: Dict[str, Any]) -> Dict[str, Any]:
         return _standardize_nba(raw)
     if sport == "nhl":
         return _standardize_nhl(raw)
+    if sport == "mlb":
+        return _standardize_mlb(raw)
     return {}
 
 

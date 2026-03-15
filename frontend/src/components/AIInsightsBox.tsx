@@ -78,6 +78,16 @@ function autoTip(chartId: string, summary: any): string {
     case "nhl_overview":
       return "Use shots, FO%, PP%, and shooting% together — one stat alone can mislead.";
 
+    case "mlb_offense":
+      return "Runs can lag hits in the short term, so compare both before judging the lineup.";
+    case "mlb_slash":
+      return "OPS and ISO help separate raw contact from real power production.";
+    case "mlb_discipline":
+      return "If walks are flat and strikeouts rise, the offense usually becomes more volatile.";
+    case "mlb_running":
+      return "Stolen bases and LOB together can reveal whether aggression is actually producing runs.";
+
+
     default:
       return "Use the rolling lines to judge direction, not noise.";
   }

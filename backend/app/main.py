@@ -16,6 +16,7 @@ from app.routes.analytics_nfl_ingame import router as analytics_nfl_ingame_route
 from app.routes.analytics_nba_ingame import router as analytics_nba_ingame_router
 from app.routes.analytics_nhl_ingame import router as analytics_nhl_ingame_router
 from app.routes.ai import router as ai_router
+from app.routes.analytics_mlb_ingame import router as analytics_mlb_ingame_router
 
 app = FastAPI(title="SportsHub API")
 
@@ -43,3 +44,4 @@ app.include_router(analytics_nfl_ingame_router)
 app.include_router(analytics_nba_ingame_router)
 app.include_router(analytics_nhl_ingame_router)
 app.include_router(ai_router)
+app.include_router(analytics_mlb_ingame_router)

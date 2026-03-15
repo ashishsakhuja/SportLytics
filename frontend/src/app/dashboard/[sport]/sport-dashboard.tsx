@@ -21,6 +21,7 @@ import { apiGet } from "@/lib/api";
 import NflInGameAnalytics from "@/components/NflInGameAnalytics";
 import NbaInGameAnalytics from "@/components/NbaInGameAnalytics";
 import NhlInGameAnalytics from "@/components/NhlInGameAnalytics";
+import MlbInGameAnalytics from "@/components/MlbInGameAnalytics";
 
 const SUPPORTED = new Set(["nfl", "nba", "mlb", "nhl"]);
 const SPORT_LABEL: Record<string, string> = {
@@ -902,7 +903,7 @@ const aiScoreDistributionSummary = useMemo(() => {
               ))}
             </select>
 
-            {s === "nfl" || s === "nba" || s === "nhl" ? (
+            {s === "nfl" || s === "nba" || s === "nhl" || s === "mlb" ? (
               <button
                 onClick={() => setShowInGame((v) => !v)}
                 className={
@@ -1238,6 +1239,16 @@ const aiScoreDistributionSummary = useMemo(() => {
 
                   {s === "nhl" && showInGame ? (
                     <NhlInGameAnalytics
+                      sport={s}
+                      team={team}
+                      season={season}
+                      seasonType={seasonType}
+                      cardClass={cardClass}
+                    />
+                  ) : null}
+
+                  {s === "mlb" && showInGame ? (
+                    <MlbInGameAnalytics
                       sport={s}
                       team={team}
                       season={season}
