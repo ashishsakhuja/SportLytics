@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from datetime import date
 from typing import Any, Dict, Iterable, List, Optional
 
 import sqlalchemy as sa
@@ -13,6 +14,7 @@ from app.models import Game, Team, TeamGameStats
 router = APIRouter(prefix="/analytics/custom", tags=["analytics-custom"])
 
 SUPPORTED_DATA_SPORTS = {"nfl", "nba", "mlb", "nhl"}
+MAX_OVERLAY_TEAMS = 5
 
 BUILT_IN_METRICS = [
     {"key": "score_for", "label": "Score For", "source": "built_in", "group": "Core"},
@@ -58,6 +60,9 @@ METRIC_LABEL_OVERRIDES = {
 }
 
 
+# ---------- helpers ----------
+
+
 def _norm_sport(s: str) -> str:
     s = (s or "").lower().strip()
     if s not in SUPPORTED_DATA_SPORTS:
@@ -68,11 +73,13 @@ def _norm_sport(s: str) -> str:
     return s
 
 
+
 def _norm_season_type(s: str) -> str:
     s = (s or "REG").upper().strip()
     if s not in {"REG", "POST"}:
         raise HTTPException(status_code=400, detail="season_type must be REG or POST")
     return s
+
 
 
 def _finalish_filter():
@@ -83,15 +90,14 @@ def _finalish_filter():
     )
 
 
+
 def _get_stat_value(stats: Dict[str, Any], key: str) -> Any:
     if not stats or not key:
         return None
-
     if key.startswith("raw:"):
         raw_key = key.split("raw:", 1)[1]
         raw = stats.get("raw_stats") or {}
         return raw.get(raw_key)
-
     cur: Any = stats
     for part in key.split("."):
         if not isinstance(cur, dict):
@@ -100,31 +106,32 @@ def _get_stat_value(stats: Dict[str, Any], key: str) -> Any:
     return cur
 
 
+
 def _coerce_number(v: Any) -> Optional[float]:
     if v is None:
         return None
     if isinstance(v, (int, float)):
         return float(v)
-
     s = str(v).strip()
-    if not s:
-        return None
-    if "/" in s:
+    if not s or "/" in s:
         return None
     if s.endswith("%"):
         s = s[:-1].strip()
-
     try:
         return float(s)
     except Exception:
         return None
 
 
-def _metric_label(key: str) -> str:
+
+def _metric_label(key: Optional[str]) -> str:
+    if not key:
+        return "Metric"
     if key in METRIC_LABEL_OVERRIDES:
         return METRIC_LABEL_OVERRIDES[key]
     cleaned = key.replace("raw:", "Raw ").replace("_", " ").replace(".", " ")
     return " ".join(part.capitalize() for part in cleaned.split())
+
 
 
 def _season_range(start: int, end: int) -> List[int]:
@@ -133,6 +140,7 @@ def _season_range(start: int, end: int) -> List[int]:
     if end - start > 12:
         raise HTTPException(status_code=400, detail="Please keep the season range to 12 years or fewer")
     return list(range(start, end + 1))
+
 
 
 def _discover_metric_keys(db: Session, sport: str, season: int, season_type: str, limit: int = 2500) -> List[Dict[str, Any]]:
@@ -174,10 +182,10 @@ def _discover_metric_keys(db: Session, sport: str, season: int, season_type: str
     return BUILT_IN_METRICS + discovered
 
 
+
 def _metric_value(metric: str, team_code: str, game: Game, stats: Optional[Dict[str, Any]]) -> Optional[float]:
     team_code = (team_code or "").upper().strip()
     is_home = (game.home_team_code or "").upper() == team_code
-
     pf = game.home_score if is_home else game.away_score
     pa = game.away_score if is_home else game.home_score
 
@@ -198,12 +206,14 @@ def _metric_value(metric: str, team_code: str, game: Game, stats: Optional[Dict[
     return _coerce_number(val)
 
 
+
 def _apply_filters(row: Dict[str, Any], home_away: str, result: str) -> bool:
     if home_away != "all" and row.get("home_away") != home_away:
         return False
     if result != "all" and row.get("result") != result:
         return False
     return True
+
 
 
 def _roll(values: List[Optional[float]], window: int) -> List[Optional[float]]:
@@ -215,7 +225,38 @@ def _roll(values: List[Optional[float]], window: int) -> List[Optional[float]]:
     return out
 
 
-def _rows_for_team(
+
+def _safe_series_key(prefix: str, value: str) -> str:
+    s = f"{prefix}_{value}".lower().strip()
+    return "".join(ch if ch.isalnum() else "_" for ch in s)
+
+
+
+def _parse_team_list(primary_team: str, overlay_teams: Optional[str]) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for raw in [primary_team, *(((overlay_teams or "").split(",")) if overlay_teams else [])]:
+        t = (raw or "").upper().strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out[:MAX_OVERLAY_TEAMS]
+
+
+
+def _date_label(game_date: Optional[date], season: Optional[int], idx: int) -> str:
+    if game_date:
+        if season is not None:
+            return f"{season}-{game_date.isoformat()}"
+        return game_date.isoformat()
+    if season is not None:
+        return f"{season}-G{idx}"
+    return f"G{idx}"
+
+
+
+def _rows_for_team_metric(
     db: Session,
     *,
     sport: str,
@@ -279,12 +320,13 @@ def _rows_for_team(
             "value": value,
             "score_for": pf,
             "score_against": pa,
-            "x": f"{g.season}-{idx}",
+            "x": _date_label(g.game_date.date() if g.game_date else None, g.season, idx),
+            "point_label": g.game_date.date().isoformat() if g.game_date else f"G{idx}",
         }
         if _apply_filters(row, home_away, result):
             out.append(row)
-
     return out
+
 
 
 def _rows_for_league_average(
@@ -327,6 +369,7 @@ def _rows_for_league_average(
     }
 
 
+
 def _season_aggregate(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     grouped: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -348,6 +391,117 @@ def _season_aggregate(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+
+def _build_overlay_rows(series_rows: Dict[str, List[Dict[str, Any]]], roll_window: int) -> List[Dict[str, Any]]:
+    key_meta: Dict[str, Dict[str, Any]] = {}
+    ordered_x: List[str] = []
+    seen_x = set()
+
+    for series_key, rows in series_rows.items():
+        rolled = _roll([r.get("value") for r in rows], roll_window)
+        for i, row in enumerate(rows):
+            x = row.get("x") or f"P{i + 1}"
+            if x not in seen_x:
+                seen_x.add(x)
+                ordered_x.append(x)
+            meta = key_meta.setdefault(
+                x,
+                {
+                    "x": x,
+                    "label": row.get("point_label") or x,
+                    "tooltipLabel": row.get("date") or row.get("point_label") or x,
+                    "season": row.get("season"),
+                    "date": row.get("date"),
+                    "opponent": row.get("opponent"),
+                    "home_away": row.get("home_away"),
+                    "result": row.get("result"),
+                },
+            )
+            meta[series_key] = row.get("value")
+            meta[f"{series_key}__roll"] = rolled[i]
+    return [key_meta[x] for x in ordered_x]
+
+
+
+def _summarize_series(rows: List[Dict[str, Any]], key: str) -> Dict[str, Optional[float]]:
+    vals = [r.get(key) for r in rows if isinstance(r.get(key), (int, float))]
+    if not vals:
+        return {"avg": None, "min": None, "max": None}
+    nums = [float(v) for v in vals]
+    return {
+        "avg": round(sum(nums) / len(nums), 6),
+        "min": round(min(nums), 6),
+        "max": round(max(nums), 6),
+    }
+
+
+
+def _build_scatter_points(
+    *,
+    team_rows: Dict[str, List[Dict[str, Any]]],
+    metric_x: str,
+    metric_y: str,
+    db: Session,
+    sport: str,
+    season_from: int,
+    season_to: int,
+    season_type: str,
+    home_away: str,
+    result: str,
+) -> Dict[str, Any]:
+    scatter_series = []
+    all_x: List[float] = []
+    all_y: List[float] = []
+    for team_code, rows_x in team_rows.items():
+        rows_y = _rows_for_team_metric(
+            db,
+            sport=sport,
+            team_code=team_code,
+            season_from=season_from,
+            season_to=season_to,
+            season_type=season_type,
+            metric=metric_y,
+            home_away=home_away,
+            result=result,
+        )
+        points = []
+        for i, row_x in enumerate(rows_x):
+            row_y = rows_y[i] if i < len(rows_y) else None
+            x_val = row_x.get("value")
+            y_val = row_y.get("value") if row_y else None
+            if x_val is None or y_val is None:
+                continue
+            points.append(
+                {
+                    "x": x_val,
+                    "y": y_val,
+                    "label": row_x.get("point_label") or row_x.get("date") or f"Point {i + 1}",
+                    "tooltipLabel": f"{team_code} • {row_x.get('date') or row_x.get('point_label') or f'Point {i + 1}'}",
+                    "opponent": row_x.get("opponent"),
+                    "home_away": row_x.get("home_away"),
+                    "result": row_x.get("result"),
+                }
+            )
+            all_x.append(float(x_val))
+            all_y.append(float(y_val))
+        scatter_series.append(
+            {
+                "key": _safe_series_key("team", team_code),
+                "label": team_code,
+                "kind": "team",
+                "team": team_code,
+                "points": points,
+            }
+        )
+
+    x_summary = {"avg": round(sum(all_x) / len(all_x), 6), "min": round(min(all_x), 6), "max": round(max(all_x), 6)} if all_x else {"avg": None, "min": None, "max": None}
+    y_summary = {"avg": round(sum(all_y) / len(all_y), 6), "min": round(min(all_y), 6), "max": round(max(all_y), 6)} if all_y else {"avg": None, "min": None, "max": None}
+    return {"series": scatter_series, "x_summary": x_summary, "y_summary": y_summary}
+
+
+# ---------- routes ----------
+
+
 @router.get("/options")
 def custom_builder_options(
     sport: str = Query(..., description="nfl/nba/mlb/nhl"),
@@ -358,18 +512,14 @@ def custom_builder_options(
     sport = _norm_sport(sport)
     season_type = _norm_season_type(season_type)
 
-    teams = (
-        db.query(Team)
-        .filter(Team.sport == sport)
-        .order_by(Team.team_code.asc())
-        .all()
-    )
+    teams = db.query(Team).filter(Team.sport == sport).order_by(Team.team_code.asc()).all()
     metrics = _discover_metric_keys(db, sport, season, season_type)
 
     return {
         "sport": sport,
         "season": season,
         "season_type": season_type,
+        "max_overlay_teams": MAX_OVERLAY_TEAMS,
         "teams": [
             {
                 "team_code": t.team_code,
@@ -382,7 +532,8 @@ def custom_builder_options(
         "metrics": metrics,
         "compare_modes": [
             {"key": "none", "label": "No Comparison"},
-            {"key": "team", "label": "Another Team"},
+            {"key": "overlay", "label": "Multiple Team Overlay"},
+            {"key": "metric", "label": "Metric vs Metric"},
             {"key": "league_avg", "label": "League Average"},
             {"key": "previous_season", "label": "Previous Season"},
         ],
@@ -396,6 +547,13 @@ def custom_builder_options(
             {"key": "area", "label": "Area"},
             {"key": "scatter", "label": "Scatter"},
         ],
+        "presets": [
+            {"key": "team_form", "label": "Team Form"},
+            {"key": "metric_vs_metric", "label": "Metric vs Metric"},
+            {"key": "team_overlay", "label": "Team Overlay"},
+            {"key": "team_vs_league", "label": "Team vs League Avg"},
+            {"key": "scatter_profile", "label": "Scatter Profile"},
+        ],
     }
 
 
@@ -406,13 +564,15 @@ def custom_builder_plot(
     season_from: int = Query(..., ge=2000),
     season_to: int = Query(..., ge=2000),
     season_type: str = Query("REG", description="REG/POST"),
-    metric: str = Query(..., description="Metric key"),
-    compare_mode: str = Query("none", description="none/team/league_avg/previous_season"),
-    compare_team: Optional[str] = Query(None, description="Comparison team code when compare_mode=team"),
+    metric: str = Query(..., description="Primary metric key"),
+    secondary_metric: Optional[str] = Query(None, description="Second metric key for metric compare or scatter"),
+    compare_mode: str = Query("none", description="none/overlay/metric/league_avg/previous_season"),
+    overlay_teams: Optional[str] = Query(None, description="Comma-separated team codes"),
     granularity: str = Query("game", description="game/season"),
     home_away: str = Query("all", description="all/home/away"),
     result: str = Query("all", description="all/W/L/T"),
     roll_window: int = Query(1, ge=1, le=20),
+    chart_type: str = Query("line", description="line/bar/area/scatter"),
     db: Session = Depends(get_db),
 ):
     sport = _norm_sport(sport)
@@ -421,52 +581,174 @@ def custom_builder_plot(
     compare_mode = (compare_mode or "none").strip().lower()
     granularity = (granularity or "game").strip().lower()
     home_away = (home_away or "all").strip().lower()
-    result = (result or "all").strip().upper()
+    result_norm = (result or "all").strip().upper()
+    chart_type = (chart_type or "line").strip().lower()
+    compare_result = "all" if result_norm == "ALL" else result_norm
 
-    if compare_mode not in {"none", "team", "league_avg", "previous_season"}:
+    if compare_mode not in {"none", "overlay", "metric", "league_avg", "previous_season"}:
         raise HTTPException(status_code=400, detail="Unsupported compare_mode")
     if granularity not in {"game", "season"}:
         raise HTTPException(status_code=400, detail="granularity must be game or season")
     if home_away not in {"all", "home", "away"}:
         raise HTTPException(status_code=400, detail="home_away must be all/home/away")
-    if result not in {"ALL", "W", "L", "T"}:
+    if result_norm not in {"ALL", "W", "L", "T"}:
         raise HTTPException(status_code=400, detail="result must be all/W/L/T")
+    if chart_type not in {"line", "bar", "area", "scatter"}:
+        raise HTTPException(status_code=400, detail="Unsupported chart_type")
+    if chart_type == "scatter" and not secondary_metric:
+        raise HTTPException(status_code=400, detail="secondary_metric is required for scatter mode")
+    if compare_mode == "metric" and not secondary_metric:
+        raise HTTPException(status_code=400, detail="secondary_metric is required when compare_mode=metric")
 
-    base_rows = _rows_for_team(
-        db,
-        sport=sport,
-        team_code=team,
-        season_from=season_from,
-        season_to=season_to,
-        season_type=season_type,
-        metric=metric,
-        home_away=home_away,
-        result="all" if result == "ALL" else result,
-    )
-    if not base_rows:
-        raise HTTPException(status_code=404, detail="No data found for the selected filters")
+    teams = _parse_team_list(team, overlay_teams)
+    if not teams:
+        raise HTTPException(status_code=400, detail="A primary team is required")
 
-    compare_label = None
-    compare_rows: List[Dict[str, Any]] = []
-    compare_season_map: Dict[int, float] = {}
-
-    if compare_mode == "team":
-        compare_team = (compare_team or "").upper().strip()
-        if not compare_team:
-            raise HTTPException(status_code=400, detail="compare_team is required when compare_mode=team")
-        compare_rows = _rows_for_team(
+    team_rows_metric_1: Dict[str, List[Dict[str, Any]]] = {}
+    for team_code in teams:
+        rows = _rows_for_team_metric(
             db,
             sport=sport,
-            team_code=compare_team,
+            team_code=team_code,
             season_from=season_from,
             season_to=season_to,
             season_type=season_type,
             metric=metric,
             home_away=home_away,
-            result="all" if result == "ALL" else result,
+            result=compare_result,
         )
-        compare_label = compare_team
+        if rows:
+            team_rows_metric_1[team_code] = rows
+
+    if team not in team_rows_metric_1:
+        raise HTTPException(status_code=404, detail="No data found for the selected filters")
+
+    if chart_type == "scatter":
+        scatter = _build_scatter_points(
+            team_rows=team_rows_metric_1,
+            metric_x=metric,
+            metric_y=secondary_metric or "",
+            db=db,
+            sport=sport,
+            season_from=season_from,
+            season_to=season_to,
+            season_type=season_type,
+            home_away=home_away,
+            result=compare_result,
+        )
+        return {
+            "sport": sport,
+            "team": team,
+            "teams": list(team_rows_metric_1.keys()),
+            "season_from": season_from,
+            "season_to": season_to,
+            "season_type": season_type,
+            "chart_type": chart_type,
+            "metric": metric,
+            "metric_label": _metric_label(metric),
+            "secondary_metric": secondary_metric,
+            "secondary_metric_label": _metric_label(secondary_metric),
+            "compare_mode": "metric" if secondary_metric else compare_mode,
+            "compare_label": _metric_label(secondary_metric) if secondary_metric else None,
+            "granularity": granularity,
+            "roll_window": roll_window,
+            "filters": {"home_away": home_away, "result": result_norm},
+            "series": scatter["series"],
+            "rows": [],
+            "summary": {
+                "points": sum(len(s.get("points", [])) for s in scatter["series"]),
+                "primary_avg": scatter["x_summary"]["avg"],
+                "primary_min": scatter["x_summary"]["min"],
+                "primary_max": scatter["x_summary"]["max"],
+                "compare_avg": scatter["y_summary"]["avg"],
+                "compare_min": scatter["y_summary"]["min"],
+                "compare_max": scatter["y_summary"]["max"],
+            },
+        }
+
+    rows: List[Dict[str, Any]] = []
+    series_meta: List[Dict[str, Any]] = []
+
+    if compare_mode == "overlay":
+        overlay_rows_source: Dict[str, List[Dict[str, Any]]] = {}
+        for team_code, team_rows in team_rows_metric_1.items():
+            src_rows = _season_aggregate(team_rows) if granularity == "season" else team_rows
+            key = _safe_series_key("team", team_code)
+            overlay_rows_source[key] = src_rows
+            series_meta.append(
+                {
+                    "key": key,
+                    "label": team_code,
+                    "kind": "team",
+                    "team": team_code,
+                    "metric": metric,
+                    "metric_label": _metric_label(metric),
+                    "roll_key": f"{key}__roll",
+                }
+            )
+        rows = _build_overlay_rows(overlay_rows_source, roll_window)
+
+    elif compare_mode == "metric":
+        primary_rows = _season_aggregate(team_rows_metric_1[team]) if granularity == "season" else team_rows_metric_1[team]
+        secondary_rows = _rows_for_team_metric(
+            db,
+            sport=sport,
+            team_code=team,
+            season_from=season_from,
+            season_to=season_to,
+            season_type=season_type,
+            metric=secondary_metric or "",
+            home_away=home_away,
+            result=compare_result,
+        )
+        secondary_rows = _season_aggregate(secondary_rows) if granularity == "season" else secondary_rows
+        primary_key = _safe_series_key("metric", metric)
+        secondary_key = _safe_series_key("metric", secondary_metric or "secondary")
+        rows = []
+        for i, row in enumerate(primary_rows):
+            other = secondary_rows[i] if i < len(secondary_rows) else None
+            rows.append(
+                {
+                    "x": row.get("x"),
+                    "label": row.get("point_label") or row.get("x"),
+                    "tooltipLabel": row.get("date") or row.get("point_label") or row.get("x"),
+                    "season": row.get("season"),
+                    "date": row.get("date"),
+                    "opponent": row.get("opponent"),
+                    "home_away": row.get("home_away"),
+                    "result": row.get("result"),
+                    primary_key: row.get("value"),
+                    secondary_key: other.get("value") if other else None,
+                }
+            )
+        rolled_primary = _roll([r.get(primary_key) for r in rows], roll_window)
+        rolled_secondary = _roll([r.get(secondary_key) for r in rows], roll_window)
+        for i, row in enumerate(rows):
+            row[f"{primary_key}__roll"] = rolled_primary[i]
+            row[f"{secondary_key}__roll"] = rolled_secondary[i]
+        series_meta = [
+            {
+                "key": primary_key,
+                "label": _metric_label(metric),
+                "kind": "metric",
+                "team": team,
+                "metric": metric,
+                "metric_label": _metric_label(metric),
+                "roll_key": f"{primary_key}__roll",
+            },
+            {
+                "key": secondary_key,
+                "label": _metric_label(secondary_metric),
+                "kind": "metric",
+                "team": team,
+                "metric": secondary_metric,
+                "metric_label": _metric_label(secondary_metric),
+                "roll_key": f"{secondary_key}__roll",
+            },
+        ]
+
     elif compare_mode == "league_avg":
+        primary_rows = _season_aggregate(team_rows_metric_1[team]) if granularity == "season" else team_rows_metric_1[team]
         compare_season_map = _rows_for_league_average(
             db,
             sport=sport,
@@ -475,9 +757,52 @@ def custom_builder_plot(
             season_type=season_type,
             metric=metric,
         )
-        compare_label = "League Avg"
+        primary_key = _safe_series_key("team", team)
+        compare_key = _safe_series_key("compare", "league_avg")
+        rows = []
+        for row in primary_rows:
+            season_value = compare_season_map.get(int(row.get("season"))) if row.get("season") is not None else None
+            rows.append(
+                {
+                    "x": row.get("x"),
+                    "label": row.get("point_label") or row.get("x"),
+                    "tooltipLabel": row.get("date") or row.get("point_label") or row.get("x"),
+                    "season": row.get("season"),
+                    "date": row.get("date"),
+                    "opponent": row.get("opponent"),
+                    "home_away": row.get("home_away"),
+                    "result": row.get("result"),
+                    primary_key: row.get("value"),
+                    compare_key: season_value,
+                }
+            )
+        rolled_primary = _roll([r.get(primary_key) for r in rows], roll_window)
+        for i, row in enumerate(rows):
+            row[f"{primary_key}__roll"] = rolled_primary[i]
+        series_meta = [
+            {
+                "key": primary_key,
+                "label": team,
+                "kind": "team",
+                "team": team,
+                "metric": metric,
+                "metric_label": _metric_label(metric),
+                "roll_key": f"{primary_key}__roll",
+            },
+            {
+                "key": compare_key,
+                "label": "League Avg",
+                "kind": "compare",
+                "team": None,
+                "metric": metric,
+                "metric_label": _metric_label(metric),
+                "roll_key": None,
+            },
+        ]
+
     elif compare_mode == "previous_season":
-        prev_rows = _rows_for_team(
+        primary_rows = _season_aggregate(team_rows_metric_1[team]) if granularity == "season" else team_rows_metric_1[team]
+        previous_rows = _rows_for_team_metric(
             db,
             sport=sport,
             team_code=team,
@@ -486,77 +811,119 @@ def custom_builder_plot(
             season_type=season_type,
             metric=metric,
             home_away=home_away,
-            result="all" if result == "ALL" else result,
+            result=compare_result,
         )
-        compare_rows = prev_rows
-        compare_label = "Previous Season"
-
-    if granularity == "season":
-        primary = _season_aggregate(base_rows)
-        compare = _season_aggregate(compare_rows) if compare_rows else []
-        compare_map = {str(r["season"]): r.get("value") for r in compare}
-        rows: List[Dict[str, Any]] = []
-        for row in primary:
-            x = row["x"]
-            compare_val = None
-            if compare_mode == "league_avg":
-                compare_val = compare_season_map.get(int(row["season"]))
-            else:
-                compare_val = compare_map.get(x)
-            rows.append({**row, "compare_value": compare_val})
-    else:
-        values = [r.get("value") for r in base_rows]
-        roll_vals = _roll(values, roll_window)
-
-        compare_roll_vals: List[Optional[float]] = []
-        if compare_rows:
-            compare_roll_vals = _roll([r.get("value") for r in compare_rows], roll_window)
-
+        previous_rows = _season_aggregate(previous_rows) if granularity == "season" else previous_rows
+        primary_key = _safe_series_key("team", team)
+        compare_key = _safe_series_key("compare", "previous_season")
         rows = []
-        for i, row in enumerate(base_rows):
-            compare_val = None
-            if compare_mode == "team":
-                compare_val = compare_rows[i].get("value") if i < len(compare_rows) else None
-            elif compare_mode == "previous_season":
-                compare_val = compare_rows[i].get("value") if i < len(compare_rows) else None
-            elif compare_mode == "league_avg":
-                season = int(row["season"])
-                compare_val = compare_season_map.get(season)
+        for i, row in enumerate(primary_rows):
+            other = previous_rows[i] if i < len(previous_rows) else None
+            rows.append(
+                {
+                    "x": row.get("x"),
+                    "label": row.get("point_label") or row.get("x"),
+                    "tooltipLabel": row.get("date") or row.get("point_label") or row.get("x"),
+                    "season": row.get("season"),
+                    "date": row.get("date"),
+                    "opponent": row.get("opponent"),
+                    "home_away": row.get("home_away"),
+                    "result": row.get("result"),
+                    primary_key: row.get("value"),
+                    compare_key: other.get("value") if other else None,
+                }
+            )
+        rolled_primary = _roll([r.get(primary_key) for r in rows], roll_window)
+        rolled_compare = _roll([r.get(compare_key) for r in rows], roll_window)
+        for i, row in enumerate(rows):
+            row[f"{primary_key}__roll"] = rolled_primary[i]
+            row[f"{compare_key}__roll"] = rolled_compare[i]
+        series_meta = [
+            {
+                "key": primary_key,
+                "label": team,
+                "kind": "team",
+                "team": team,
+                "metric": metric,
+                "metric_label": _metric_label(metric),
+                "roll_key": f"{primary_key}__roll",
+            },
+            {
+                "key": compare_key,
+                "label": "Previous Season",
+                "kind": "compare",
+                "team": team,
+                "metric": metric,
+                "metric_label": _metric_label(metric),
+                "roll_key": f"{compare_key}__roll",
+            },
+        ]
 
-            out_row = {
-                **row,
-                "x": row.get("date") or f"G{row.get('idx')}",
-                "roll_value": roll_vals[i],
-                "compare_value": compare_val,
-                "compare_roll_value": compare_roll_vals[i] if i < len(compare_roll_vals) else None,
+    else:
+        primary_rows = _season_aggregate(team_rows_metric_1[team]) if granularity == "season" else team_rows_metric_1[team]
+        primary_key = _safe_series_key("team", team)
+        rows = []
+        for row in primary_rows:
+            rows.append(
+                {
+                    "x": row.get("x"),
+                    "label": row.get("point_label") or row.get("x"),
+                    "tooltipLabel": row.get("date") or row.get("point_label") or row.get("x"),
+                    "season": row.get("season"),
+                    "date": row.get("date"),
+                    "opponent": row.get("opponent"),
+                    "home_away": row.get("home_away"),
+                    "result": row.get("result"),
+                    primary_key: row.get("value"),
+                }
+            )
+        rolled_primary = _roll([r.get(primary_key) for r in rows], roll_window)
+        for i, row in enumerate(rows):
+            row[f"{primary_key}__roll"] = rolled_primary[i]
+        series_meta = [
+            {
+                "key": primary_key,
+                "label": team,
+                "kind": "team",
+                "team": team,
+                "metric": metric,
+                "metric_label": _metric_label(metric),
+                "roll_key": f"{primary_key}__roll",
             }
-            rows.append(out_row)
+        ]
 
-    valid_primary = [r.get("value") for r in rows if r.get("value") is not None]
-    valid_compare = [r.get("compare_value") for r in rows if r.get("compare_value") is not None]
+    if not rows:
+        raise HTTPException(status_code=404, detail="No data found for the selected filters")
+
+    summary_primary = _summarize_series(rows, series_meta[0]["key"]) if series_meta else {"avg": None, "min": None, "max": None}
+    summary_compare = _summarize_series(rows, series_meta[1]["key"]) if len(series_meta) > 1 else {"avg": None, "min": None, "max": None}
 
     return {
         "sport": sport,
         "team": team,
+        "teams": teams,
         "season_from": season_from,
         "season_to": season_to,
         "season_type": season_type,
+        "chart_type": chart_type,
         "metric": metric,
         "metric_label": _metric_label(metric),
+        "secondary_metric": secondary_metric,
+        "secondary_metric_label": _metric_label(secondary_metric),
         "compare_mode": compare_mode,
-        "compare_label": compare_label,
+        "compare_label": series_meta[1]["label"] if len(series_meta) > 1 else None,
         "granularity": granularity,
         "roll_window": roll_window,
-        "filters": {
-            "home_away": home_away,
-            "result": result,
-        },
+        "filters": {"home_away": home_away, "result": result_norm},
+        "series": series_meta,
         "summary": {
             "points": len(rows),
-            "primary_avg": round(sum(valid_primary) / len(valid_primary), 6) if valid_primary else None,
-            "primary_min": round(min(valid_primary), 6) if valid_primary else None,
-            "primary_max": round(max(valid_primary), 6) if valid_primary else None,
-            "compare_avg": round(sum(valid_compare) / len(valid_compare), 6) if valid_compare else None,
+            "primary_avg": summary_primary["avg"],
+            "primary_min": summary_primary["min"],
+            "primary_max": summary_primary["max"],
+            "compare_avg": summary_compare["avg"],
+            "compare_min": summary_compare["min"],
+            "compare_max": summary_compare["max"],
         },
         "rows": rows,
     }
