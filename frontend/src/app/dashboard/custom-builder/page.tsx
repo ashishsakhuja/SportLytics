@@ -195,22 +195,6 @@ function SummaryCard({
   );
 }
 
-function buildCsv(rows: Array<Record<string, string | number | null | undefined>>) {
-  if (!rows.length) return "";
-  const keys = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
-  const escape = (value: string | number | null | undefined) => {
-    const text = value == null ? "" : String(value);
-    if (text.includes(",") || text.includes("\n") || text.includes('"')) {
-      return `"${text.replaceAll('"', '""')}"`;
-    }
-    return text;
-  };
-  return [
-    keys.join(","),
-    ...rows.map((row) => keys.map((key) => escape(row[key])).join(",")),
-  ].join("\n");
-}
-
 export default function CustomBuilderPage() {
   const [sport, setSport] = useState<SportKey>("nfl");
   const [seasonType, setSeasonType] = useState(DEFAULT_SEASON_TYPE);
@@ -233,11 +217,10 @@ export default function CustomBuilderPage() {
   const [loadingPlot, setLoadingPlot] = useState(false);
   const [plot, setPlot] = useState<BuilderPlotResp | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
 
   const chartWrapRef = useRef<HTMLDivElement | null>(null);
-  const exportCardRef = useRef<HTMLDivElement | null>(null);
+  const exportCardRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     async function loadOptions() {
@@ -382,108 +365,6 @@ export default function CustomBuilderPage() {
 
   const chartData = useMemo(() => plot?.rows ?? [], [plot]);
 
-  const shareUrl = useMemo(() => {
-    const params = new URLSearchParams({
-      sport,
-      team,
-      season_from: seasonFrom,
-      season_to: seasonTo,
-      season_type: seasonType,
-      metric,
-      chart_type: chartType,
-      compare_mode: chartType === "scatter" ? "metric" : compareMode,
-      granularity,
-      home_away: homeAway,
-      result: resultFilter,
-      roll_window: rollWindow,
-    });
-    if (overlayTeams.length) params.set("overlay_teams", overlayTeams.join(","));
-    if (secondaryMetric && (compareMode === "metric" || chartType === "scatter")) {
-      params.set("secondary_metric", secondaryMetric);
-    }
-    if (typeof window === "undefined") {
-      return `/dashboard/custom-builder?${params.toString()}`;
-    }
-    return `${window.location.origin}/dashboard/custom-builder?${params.toString()}`;
-  }, [
-    sport,
-    team,
-    seasonFrom,
-    seasonTo,
-    seasonType,
-    metric,
-    secondaryMetric,
-    chartType,
-    compareMode,
-    granularity,
-    homeAway,
-    resultFilter,
-    rollWindow,
-    overlayTeams,
-  ]);
-
-  const quickInsights = useMemo(() => {
-    if (!plot) return [] as string[];
-    const insights: string[] = [];
-    const series = plot.series ?? [];
-
-    if (plot.chart_type === "scatter") {
-      insights.push(
-        `${plot.metric_label} vs ${
-          plot.secondary_metric_label ?? "secondary metric"
-        } produced ${plot.summary.points} valid points.`
-      );
-      if (plot.summary.primary_avg != null && plot.summary.compare_avg != null) {
-        insights.push(
-          `Average point: ${formatNum(plot.summary.primary_avg)} ${plot.metric_label} and ${formatNum(
-            plot.summary.compare_avg
-          )} ${plot.secondary_metric_label ?? "comparison metric"}.`
-        );
-      }
-      if (series.length > 1) {
-        insights.push(
-          `Overlaying ${series.length} teams makes pattern differences easier to spot immediately.`
-        );
-      }
-      return insights;
-    }
-
-    if (series[0]) {
-      insights.push(
-        `${series[0].label} average: ${formatNum(plot.summary.primary_avg)} ${plot.metric_label}.`
-      );
-    }
-    if (plot.roll_window > 1 && plot.granularity === "game") {
-      insights.push(
-        `Rolling ${plot.roll_window}-game smoothing is active for all line-capable series.`
-      );
-    }
-    if (plot.compare_mode === "overlay") {
-      insights.push(
-        `Overlay mode is comparing ${series.length} teams on the same ${plot.metric_label} axis.`
-      );
-    } else if (plot.compare_mode === "metric") {
-      insights.push(
-        `Metric-vs-metric mode compares ${plot.metric_label} against ${
-          plot.secondary_metric_label ?? "the selected comparison stat"
-        }.`
-      );
-    } else if (plot.compare_mode === "league_avg") {
-      insights.push(
-        `League-average mode benchmarks ${team} against a season-level league baseline.`
-      );
-    } else if (plot.compare_mode === "previous_season") {
-      insights.push(`Previous-season mode lines up the same team across adjacent years.`);
-    }
-    if (plot.summary.primary_max != null && plot.summary.primary_min != null) {
-      insights.push(
-        `Observed range runs from ${formatNum(plot.summary.primary_min)} to ${formatNum(
-          plot.summary.primary_max
-        )}.`
-      );
-    }
-    return insights;
-  }, [plot, team]);
 
   const visibleSeries = useMemo(() => {
     return (plot?.series ?? []).map((series, index) => ({
@@ -564,6 +445,10 @@ export default function CustomBuilderPage() {
         pixelRatio: 2,
         backgroundColor: "#050507",
         skipFonts: false,
+        filter: (node) => {
+          if (!(node instanceof HTMLElement)) return true;
+          return node.dataset.exportIgnore !== "true";
+        },
       });
 
       const link = document.createElement("a");
@@ -580,28 +465,6 @@ export default function CustomBuilderPage() {
     }
   }
 
-  function downloadCsv() {
-    if (!plot?.rows?.length) return;
-    const csv = buildCsv(plot.rows);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `sportlytics-custom-data-${sport}-${team}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function copyShareLink() {
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopyStatus("Copied link");
-      window.setTimeout(() => setCopyStatus(null), 1600);
-    } catch {
-      setCopyStatus("Copy failed");
-      window.setTimeout(() => setCopyStatus(null), 1600);
-    }
-  }
 
   function renderStandardChart() {
     if (!plot || !visibleSeries.length || !chartData.length) {
@@ -818,6 +681,44 @@ export default function CustomBuilderPage() {
     }
     return chartData;
   }, [plot, chartData]);
+
+  const quickInsights = useMemo(() => {
+    if (!plot) return [] as string[];
+
+    const insights: string[] = [];
+    const pointCount = plot.summary.points ?? 0;
+
+    insights.push(
+      `${plot.metric_label} returned ${pointCount} point${pointCount === 1 ? "" : "s"} for ${team || plot.team} across ${plot.season_from}–${plot.season_to}.`
+    );
+
+    if (plot.summary.primary_avg != null) {
+      insights.push(
+        `Average ${plot.metric_label.toLowerCase()}: ${formatNum(plot.summary.primary_avg)}${
+          plot.summary.primary_min != null && plot.summary.primary_max != null
+            ? `, ranging from ${formatNum(plot.summary.primary_min)} to ${formatNum(plot.summary.primary_max)}`
+            : ""
+        }.`
+      );
+    }
+
+    if (
+      plot.compare_mode !== "none" &&
+      plot.compare_avg != null &&
+      (plot.secondary_metric_label || plot.compare_label)
+    ) {
+      const compareName = plot.secondary_metric_label ?? plot.compare_label ?? "comparison";
+      insights.push(
+        `Comparison baseline for ${compareName.toLowerCase()}: ${formatNum(plot.summary.compare_avg)}.`
+      );
+    } else if (plot.granularity === "game" && plot.roll_window > 1) {
+      insights.push(
+        `Rolling trend enabled with a ${plot.roll_window}-game smoothing window to make recent movement easier to read.`
+      );
+    }
+
+    return insights.slice(0, 3);
+  }, [plot, team]);
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -1154,7 +1055,10 @@ export default function CustomBuilderPage() {
             />
           </div>
 
-          <section className="rounded-[30px] border border-fuchsia-400/20 bg-[radial-gradient(circle_at_top_left,rgba(217,70,239,0.10),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.03))] p-5 backdrop-blur">
+          <section
+            ref={exportCardRef}
+            className="rounded-[30px] border border-fuchsia-400/20 bg-[radial-gradient(circle_at_top_left,rgba(217,70,239,0.10),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.03))] p-5 backdrop-blur"
+          >
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <h2 className="text-xl font-semibold">
@@ -1199,106 +1103,37 @@ export default function CustomBuilderPage() {
               </div>
             </div>
 
-            <div className="mb-4 flex flex-wrap gap-2">
+            <div data-export-ignore="true" className="mb-4 flex flex-wrap gap-2">
               <button
                 onClick={downloadChartPng}
                 className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white/85 transition hover:bg-white/10"
               >
                 Download PNG
               </button>
-              <button
-                onClick={downloadCsv}
-                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white/85 transition hover:bg-white/10"
-              >
-                Export CSV
-              </button>
-              <button
-                onClick={copyShareLink}
-                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white/85 transition hover:bg-white/10"
-              >
-                Copy Share Link
-              </button>
-              {copyStatus ? (
-                <div className="self-center text-xs text-fuchsia-200">{copyStatus}</div>
-              ) : null}
               {downloadStatus ? (
                 <div className="self-center text-xs text-fuchsia-200">{downloadStatus}</div>
               ) : null}
             </div>
 
-            <div
-              ref={exportCardRef}
-              className="rounded-[28px] border border-fuchsia-400/15 bg-[radial-gradient(circle_at_top_left,rgba(168,85,247,0.12),transparent_35%),#050507] p-4 shadow-[0_0_40px_rgba(168,85,247,0.08)]"
-            >
-              <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <div className="text-2xl font-semibold tracking-tight text-white">
-                    {plot?.chart_type === "scatter"
-                      ? `${plot.metric_label ?? currentMetric?.label ?? "Metric"} vs ${
-                          plot.secondary_metric_label ??
-                          currentSecondaryMetric?.label ??
-                          "Metric"
-                        }`
-                      : plot?.metric_label ?? currentMetric?.label ?? "Custom Chart"}
+            <div ref={chartWrapRef} className="rounded-2xl bg-black/15 p-2">
+              {plot?.chart_type === "scatter" ? renderScatterChart() : renderStandardChart()}
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
+              {quickInsights.length ? (
+                quickInsights.map((insight, idx) => (
+                  <div
+                    key={idx}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/75"
+                  >
+                    {insight}
                   </div>
-                  <div className="mt-1 text-sm text-white/55">
-                    {team || "Primary team"}
-                    {plot?.compare_mode === "overlay"
-                      ? ` + ${Math.max(0, (plot.teams?.length ?? 1) - 1)} overlay team(s)`
-                      : ""}
-                    {plot?.compare_mode === "metric" && plot?.secondary_metric_label
-                      ? ` vs ${plot.secondary_metric_label}`
-                      : ""}
-                    {plot?.compare_mode === "league_avg" && plot?.compare_label
-                      ? ` vs ${plot.compare_label}`
-                      : ""}
-                    {plot?.compare_mode === "previous_season" && plot?.compare_label
-                      ? ` vs ${plot.compare_label}`
-                      : ""}
-                    {chartType !== "scatter"
-                      ? ` • ${granularity === "game" ? "Game by game" : "Season average"}`
-                      : " • Scatter view"}
-                  </div>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/55">
+                  Build a chart to generate quick readouts for the selected split.
                 </div>
-
-                <div className="flex flex-wrap items-center gap-2 text-xs text-white/60">
-                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-                    {sport.toUpperCase()}
-                  </span>
-                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-                    {seasonFrom}–{seasonTo}
-                  </span>
-                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-                    {homeAway === "all" ? "All locations" : titleCase(homeAway)}
-                  </span>
-                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-                    {resultFilter === "all" ? "All results" : resultFilter}
-                  </span>
-                </div>
-              </div>
-
-              <div ref={chartWrapRef} className="rounded-2xl bg-black/15 p-2">
-                {plot?.chart_type === "scatter"
-                  ? renderScatterChart()
-                  : renderStandardChart()}
-              </div>
-
-              <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
-                {quickInsights.length ? (
-                  quickInsights.map((insight, idx) => (
-                    <div
-                      key={idx}
-                      className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/75"
-                    >
-                      {insight}
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/55">
-                    Build a chart to generate quick readouts for the selected split.
-                  </div>
-                )}
-              </div>
+              )}
             </div>
           </section>
 
