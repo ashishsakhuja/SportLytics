@@ -392,6 +392,13 @@ export default function GeneralDashboard() {
                   {SPORT_LABEL[key] ?? key.toUpperCase()} →
                 </Link>
               ))}
+
+            <Link
+              href="/dashboard/custom-builder"
+              className="rounded-full px-4 py-2 text-xs font-semibold border border-fuchsia-400/30 bg-fuchsia-500/10 text-fuchsia-100 hover:bg-fuchsia-500/15 transition"
+            >
+              Custom Builder →
+            </Link>
           </div>
 
           <div className="flex items-center gap-2">
