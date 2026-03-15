@@ -399,6 +399,13 @@ export default function GeneralDashboard() {
             >
               Custom Builder →
             </Link>
+
+            <Link
+              href="/dashboard/signal-center"
+              className="rounded-full px-4 py-2 text-xs font-semibold border border-fuchsia-400/30 bg-fuchsia-500/10 text-fuchsia-100 hover:bg-fuchsia-500/15 transition"
+            >
+              Signal Center →
+            </Link>
           </div>
 
           <div className="flex items-center gap-2">
