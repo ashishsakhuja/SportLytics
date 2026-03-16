@@ -24,6 +24,21 @@ type ChartQueryResp = {
   answer: string;
 };
 
+type SharedPlotPayload = {
+  chart_id: string;
+  chart_title: string;
+  sport: string;
+  season: number;
+  season_type: string;
+  team: string | null;
+  summary: Record<string, unknown> | null;
+  plot_url: string;
+  image_data_url: string | null;
+  shared_at: string;
+};
+
+const COMMUNITY_SHARE_KEY = "sportlytics.community.share";
+
 export default function PlotActions({
   exportRef,
   chartId,
@@ -38,6 +53,8 @@ export default function PlotActions({
   className = "",
 }: PlotActionsProps) {
   const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
+  const [shareStatus, setShareStatus] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
@@ -77,25 +94,31 @@ export default function PlotActions({
     );
   }, [chartTitle, shareBody, sport]);
 
+  async function createSnapshot() {
+    if (!exportRef.current) return null;
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => resolve());
+      });
+    });
+    return toPng(exportRef.current, {
+      cacheBust: true,
+      pixelRatio: 1.35,
+      backgroundColor: "#050507",
+      skipFonts: false,
+      filter: (node) => {
+        if (!(node instanceof HTMLElement)) return true;
+        return node.dataset.exportIgnore !== "true";
+      },
+    });
+  }
+
   async function handleDownload() {
     if (!exportRef.current) return;
     try {
       setDownloadStatus("Preparing PNG...");
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => resolve());
-        });
-      });
-      const dataUrl = await toPng(exportRef.current, {
-        cacheBust: true,
-        pixelRatio: 2,
-        backgroundColor: "#050507",
-        skipFonts: false,
-        filter: (node) => {
-          if (!(node instanceof HTMLElement)) return true;
-          return node.dataset.exportIgnore !== "true";
-        },
-      });
+      const dataUrl = await createSnapshot();
+      if (!dataUrl) throw new Error("No plot snapshot available");
       const link = document.createElement("a");
       link.href = dataUrl;
       link.download = `sportlytics-${chartId}-${sport}-${team || "chart"}.png`;
@@ -133,14 +156,44 @@ export default function PlotActions({
     }
   }
 
-  function handleShare() {
-    const qs = new URLSearchParams({
-      share: "1",
-      plot_title: chartTitle,
-      plot_url: plotUrl,
-      prefill_body: defaultShareBody,
-    });
-    window.location.assign(`/dashboard/community?${qs.toString()}`);
+  async function handleShare() {
+    try {
+      setSharing(true);
+      setShareStatus("Preparing shared plot...");
+      let imageDataUrl: string | null = null;
+      try {
+        imageDataUrl = await createSnapshot();
+      } catch (err) {
+        console.warn("Shared plot snapshot failed; continuing without image.", err);
+      }
+      const payload: SharedPlotPayload = {
+        chart_id: chartId,
+        chart_title: chartTitle,
+        sport,
+        season,
+        season_type: seasonType,
+        team: team || null,
+        summary: summary || null,
+        plot_url: plotUrl,
+        image_data_url: imageDataUrl,
+        shared_at: new Date().toISOString(),
+      };
+      window.sessionStorage.setItem(
+        COMMUNITY_SHARE_KEY,
+        JSON.stringify({
+          plot_title: chartTitle,
+          plot_url: plotUrl,
+          prefill_body: defaultShareBody,
+          plot_payload: payload,
+        })
+      );
+      window.location.assign("/dashboard/community?share=1");
+    } catch (err) {
+      console.error("Share to community failed:", err);
+      setShareStatus("Share failed");
+      window.setTimeout(() => setShareStatus(null), 1800);
+      setSharing(false);
+    }
   }
 
   const modal = open ? (
@@ -225,11 +278,13 @@ export default function PlotActions({
         </button>
         <button
           onClick={handleShare}
-          className="rounded-full border border-fuchsia-400/25 bg-fuchsia-500/10 px-4 py-2 text-xs font-semibold text-fuchsia-100 transition hover:bg-fuchsia-500/15"
+          disabled={sharing}
+          className="rounded-full border border-fuchsia-400/25 bg-fuchsia-500/10 px-4 py-2 text-xs font-semibold text-fuchsia-100 transition hover:bg-fuchsia-500/15 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Share to Community
+          {sharing ? "Preparing Share..." : "Share to Community"}
         </button>
         {downloadStatus ? <div className="text-xs text-fuchsia-200">{downloadStatus}</div> : null}
+        {shareStatus ? <div className="text-xs text-cyan-100">{shareStatus}</div> : null}
       </div>
 
       {mounted && modal ? createPortal(modal, document.body) : null}

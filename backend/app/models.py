@@ -260,4 +260,5 @@ class CommunityMessage(Base):
     body: Mapped[str] = mapped_column(Text)
     shared_plot_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     shared_plot_url: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    shared_plot_payload = sa.Column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

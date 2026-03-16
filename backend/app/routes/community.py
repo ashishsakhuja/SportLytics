@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException
@@ -189,6 +189,49 @@ def _thread_payload(db: Session, thread: CommunityThread) -> dict:
 
 
 
+def _normalize_shared_plot_payload(value: Any) -> Optional[dict]:
+    if not isinstance(value, dict):
+        return None
+
+    out: dict[str, Any] = {}
+    simple_string_fields = {
+        "chart_id",
+        "chart_title",
+        "sport",
+        "season_type",
+        "team",
+        "plot_url",
+        "shared_at",
+        "image_data_url",
+    }
+    for key in simple_string_fields:
+        raw = value.get(key)
+        if raw is None:
+            continue
+        if not isinstance(raw, str):
+            raw = str(raw)
+        raw = raw.strip()
+        if not raw:
+            continue
+        if key == "image_data_url":
+            if not raw.startswith("data:image/"):
+                continue
+            if len(raw) > 5_000_000:
+                continue
+        out[key] = raw
+
+    for key in ("season",):
+        raw = value.get(key)
+        if isinstance(raw, (int, float)):
+            out[key] = int(raw)
+
+    summary = value.get("summary")
+    if isinstance(summary, dict):
+        out["summary"] = summary
+
+    return out or None
+
+
 def _message_payload(message: CommunityMessage) -> dict:
     return {
         "id": message.id,
@@ -197,6 +240,7 @@ def _message_payload(message: CommunityMessage) -> dict:
         "body": message.body,
         "shared_plot_title": message.shared_plot_title,
         "shared_plot_url": message.shared_plot_url,
+        "shared_plot_payload": message.shared_plot_payload,
         "created_at": message.created_at.isoformat() if message.created_at else None,
     }
 
@@ -302,6 +346,7 @@ class ThreadCreate(BaseModel):
     is_private: bool = False
     shared_plot_title: Optional[str] = Field(default=None, max_length=200)
     shared_plot_url: Optional[str] = Field(default=None, max_length=600)
+    shared_plot_payload: Optional[dict[str, Any]] = None
 
 
 class MessageCreate(BaseModel):
@@ -309,6 +354,7 @@ class MessageCreate(BaseModel):
     body: str = Field(..., min_length=1, max_length=4000)
     shared_plot_title: Optional[str] = Field(default=None, max_length=200)
     shared_plot_url: Optional[str] = Field(default=None, max_length=600)
+    shared_plot_payload: Optional[dict[str, Any]] = None
 
 
 class AutoPostgameSyncRequest(BaseModel):
@@ -404,6 +450,7 @@ def create_thread(group_id: int, payload: ThreadCreate, db: Session = Depends(ge
         body=payload.body.strip(),
         shared_plot_title=(payload.shared_plot_title or "").strip() or None,
         shared_plot_url=(payload.shared_plot_url or "").strip() or None,
+        shared_plot_payload=_normalize_shared_plot_payload(payload.shared_plot_payload),
         created_at=now,
     ))
     db.commit()
@@ -448,6 +495,7 @@ def create_message(thread_id: int, payload: MessageCreate, db: Session = Depends
         body=payload.body.strip(),
         shared_plot_title=(payload.shared_plot_title or "").strip() or None,
         shared_plot_url=(payload.shared_plot_url or "").strip() or None,
+        shared_plot_payload=_normalize_shared_plot_payload(payload.shared_plot_payload),
         created_at=now,
     )
     thread.updated_at = now
