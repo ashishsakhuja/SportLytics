@@ -5,20 +5,136 @@ from typing import Any, Dict, List, Optional
 
 from app.services.team_aliases import TEAM_ALIASES
 
-QUERY_TYPES = {"team_trend", "team_compare", "league_rank", "trend_rank", "stat_explain"}
+QUERY_TYPES = {
+    "team_trend",
+    "team_compare",
+    "league_rank",
+    "trend_rank",
+    "stat_explain",
+    "smalltalk",
+    "unknown",
+    "clarify_team",
+}
 
-OFFENSE_TERMS = {"offense", "offensive", "score", "scoring", "points", "runs", "goals", "attack"}
-DEFENSE_TERMS = {"defense", "defensive", "allowed", "allowing", "preventing", "stopping"}
+GREETING_TERMS = {
+    "hello",
+    "hi",
+    "hey",
+    "hey pulse",
+    "hello pulse",
+    "good morning",
+    "good afternoon",
+    "good evening",
+}
+
+SMALLTALK_TERMS = {
+    "how are you",
+    "who are you",
+    "what can you do",
+    "thanks",
+    "thank you",
+    "help",
+}
+
+OFFENSE_TERMS = {
+    "offense",
+    "offensive",
+    "score",
+    "scores",
+    "scoring",
+    "scored",
+    "points",
+    "runs",
+    "goals",
+    "attack",
+    "put up",
+}
+
+DEFENSE_TERMS = {
+    "defense",
+    "defensive",
+    "allowed",
+    "allowing",
+    "preventing",
+    "stopping",
+    "points allowed",
+    "runs allowed",
+    "goals allowed",
+}
+
 TURNOVER_TERMS = {"turnover", "turnovers", "takeaways", "giveaways"}
-SOS_TERMS = {"sos", "schedule", "strength of schedule", "tough schedule", "hard schedule"}
-SPLIT_TERMS = {"home", "away", "road", "split", "location"}
-MARGIN_TERMS = {"margin", "differential", "point differential", "run differential", "goal differential"}
-TREND_TERMS = {"trend", "trending", "improving", "improved", "improvement", "rising", "up", "surging", "heating up", "declining", "falling", "sliding", "recent", "lately", "last 5", "previous 5"}
-RANK_TERMS = {"best", "worst", "top", "bottom", "rank", "ranking", "leader", "leaders"}
-COMPARE_TERMS = {"compare", "versus", "vs", "against", "better"}
-EXPLAIN_TERMS = {"why", "explain", "how come", "what happened", "what is causing", "reason"}
-UP_TERMS = {"up", "improving", "improved", "rising", "surging", "heating up", "better"}
-DOWN_TERMS = {"down", "declining", "falling", "sliding", "worse", "struggling"}
+SOS_TERMS = {"sos", "schedule", "strength of schedule"}
+SPLIT_TERMS = {"home", "away", "road", "split"}
+MARGIN_TERMS = {"margin", "differential"}
+
+TREND_TERMS = {
+    "trend",
+    "trending",
+    "improving",
+    "rising",
+    "recent",
+    "lately",
+    "last 5",
+    "last five",
+    "hot",
+    "cold",
+    "heating up",
+}
+
+RANK_TERMS = {
+    "best",
+    "worst",
+    "top",
+    "bottom",
+    "rank",
+    "ranking",
+    "ranked",
+    "leaders",
+    "leader",
+    "highest",
+    "lowest",
+    "most",
+    "least",
+}
+
+COMPARE_TERMS = {"compare", "versus", "vs", "against"}
+EXPLAIN_TERMS = {"why", "explain", "how come", "reason", "struggling"}
+
+UP_TERMS = {"up", "improving", "rising", "surging", "better", "hotter"}
+DOWN_TERMS = {"down", "declining", "falling", "sliding", "struggling", "worse", "cold"}
+
+SPORTS_INTENT_TERMS = {
+    "team",
+    "teams",
+    "game",
+    "games",
+    "offense",
+    "defense",
+    "score",
+    "scores",
+    "scoring",
+    "points",
+    "rank",
+    "ranking",
+    "trend",
+    "trending",
+    "matchup",
+    "season",
+    "record",
+    "nfl",
+    "nba",
+    "mlb",
+    "nhl",
+    "touchdown",
+    "td",
+    "yards",
+    "allowed",
+    "win",
+    "wins",
+    "losses",
+}
+
+THRESHOLD_PATTERN = re.compile(r"\b(over|under|more than|less than|at least|at most)\s+(\d+(?:\.\d+)?)\b")
 
 
 def extract_team_codes(question: str, known_codes: set[str]) -> List[str]:
@@ -26,6 +142,7 @@ def extract_team_codes(question: str, known_codes: set[str]) -> List[str]:
     found: List[str] = []
 
     alias_items = sorted(TEAM_ALIASES.items(), key=lambda kv: len(kv[0]), reverse=True)
+
     for alias, code in alias_items:
         if code not in known_codes or code in found:
             continue
@@ -71,6 +188,16 @@ def _infer_direction(text: str) -> str:
     return "neutral"
 
 
+def _has_sports_intent(text: str, teams: List[str]) -> bool:
+    if teams:
+        return True
+    if _contains_any(text, SPORTS_INTENT_TERMS):
+        return True
+    if THRESHOLD_PATTERN.search(text):
+        return True
+    return False
+
+
 def route_query(
     *,
     question: str,
@@ -79,46 +206,70 @@ def route_query(
 ) -> Dict[str, Any]:
     raw_question = (question or "").strip()
     text = raw_question.lower()
-    team_filter = (team_filter or "").upper().strip() or None
 
     teams = extract_team_codes(raw_question, known_codes)
-    if team_filter and team_filter in known_codes and team_filter not in teams:
-        teams = [team_filter, *teams][:4]
+    has_sports_intent = _has_sports_intent(text, teams)
+
+    if (_contains_any(text, GREETING_TERMS) or _contains_any(text, SMALLTALK_TERMS)) and not has_sports_intent:
+        return {
+            "query_type": "smalltalk",
+            "raw_question": raw_question,
+        }
 
     metric_focus = _infer_metric_focus(text)
     direction = _infer_direction(text)
+
     has_compare = _contains_any(text, COMPARE_TERMS)
     has_rank = _contains_any(text, RANK_TERMS)
     has_trend = _contains_any(text, TREND_TERMS)
     has_explain = _contains_any(text, EXPLAIN_TERMS)
+    has_threshold = THRESHOLD_PATTERN.search(text) is not None
 
     if has_compare or len(teams) >= 2:
         query_type = "team_compare"
-    elif has_explain:
+
+    elif has_explain and teams:
         query_type = "stat_explain"
+
+    elif has_explain and not teams and has_sports_intent:
+        return {
+            "query_type": "clarify_team",
+            "message": "Which team are you asking about?",
+            "raw_question": raw_question,
+        }
+
     elif has_rank and has_trend:
         query_type = "trend_rank"
+
     elif has_rank:
         query_type = "league_rank"
-    elif teams or team_filter:
+
+    elif teams:
         query_type = "team_trend"
+
     elif has_trend:
         query_type = "trend_rank"
-    else:
+
+    elif has_threshold and metric_focus == "offense":
         query_type = "league_rank"
 
-    rank_order = "desc"
-    if query_type in {"league_rank", "trend_rank"}:
-        if metric_focus == "defense":
-            rank_order = "desc" if direction == "up" else "asc"
-        elif metric_focus == "turnovers":
-            rank_order = "desc" if direction == "up" else "asc"
-        elif metric_focus == "split":
-            rank_order = "desc"
-        elif metric_focus == "sos":
-            rank_order = "desc" if direction in {"up", "neutral"} else "asc"
-        else:
-            rank_order = "desc" if direction in {"up", "neutral"} else "asc"
+    elif has_sports_intent:
+        query_type = "league_rank"
+
+    else:
+        return {
+            "query_type": "unknown",
+            "message": "Sorry, I can only analyze sports information. Try asking about team trends, offense, defense, or rankings.",
+            "raw_question": raw_question,
+        }
+
+    threshold = None
+    threshold_match = THRESHOLD_PATTERN.search(text)
+    if threshold_match:
+        try:
+            threshold = float(threshold_match.group(2))
+        except Exception:
+            threshold = None
 
     return {
         "query_type": query_type,
@@ -126,7 +277,7 @@ def route_query(
         "metric_focus": metric_focus,
         "direction": direction,
         "window": "last5_vs_prev5",
-        "scope": "team" if teams or team_filter else "league",
-        "rank_order": rank_order,
+        "scope": "team" if teams else "league",
+        "threshold": threshold,
         "raw_question": raw_question,
     }

@@ -5,10 +5,11 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
-from openai import OpenAI
 from sqlalchemy.orm import Session
 
+from app.services.pulse_narrative import answer_for_route, storyline_caption
 from app.services.pulse_query_router import route_query
+from app.services.pulse_smalltalk import generate_smalltalk_response
 from app.services.pulse_trend_engine import (
     compute_league_trend_summaries,
     compute_team_trend_summary,
@@ -20,7 +21,6 @@ from app.services.redis_cache import get_redis
 POINTS_LABEL = {"nfl": "points", "nba": "points", "mlb": "runs", "nhl": "goals"}
 QUERY_TTL_SECONDS = int(os.getenv("AI_QUERY_TTL_SECONDS", "900"))
 STORYLINES_TTL_SECONDS = int(os.getenv("AI_STORYLINES_TTL_SECONDS", "900"))
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 def _cache_get(key: str) -> Optional[str]:
@@ -49,7 +49,14 @@ def _stable_hash(text: str) -> str:
     return hashlib.md5(text.encode("utf-8")).hexdigest()
 
 
-def build_team_summaries(db: Session, *, sport: str, season: int, season_type: str, team_code: Optional[str] = None) -> List[Dict[str, Any]]:
+def build_team_summaries(
+    db: Session,
+    *,
+    sport: str,
+    season: int,
+    season_type: str,
+    team_code: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     return compute_league_trend_summaries(
         db,
         sport=sport,
@@ -137,38 +144,15 @@ def _build_storyline_candidates(summaries: List[Dict[str, Any]]) -> List[Dict[st
     return candidates
 
 
-def _storyline_prompt(item: Dict[str, Any], *, sport: str, season: int, season_type: str) -> str:
-    points_label = POINTS_LABEL.get(sport, "points")
-    return (
-        "Write a concise sports analytics storyline in at most 2 sentences.\n"
-        "Rules:\n"
-        "- Use only the provided numbers.\n"
-        "- No speculation or future predictions.\n"
-        "- Sound like a sharp dashboard insight.\n"
-        f"- Use '{points_label}' as the scoring term when relevant.\n\n"
-        f"Sport: {sport.upper()}\nSeason: {season}\nSeason type: {season_type}\n"
-        f"Insight payload: {json.dumps(item, sort_keys=True)}"
-    )
-
-
-def _generate_storyline_text(item: Dict[str, Any], *, sport: str, season: int, season_type: str) -> str:
-    prompt = _storyline_prompt(item, sport=sport, season=season, season_type=season_type)
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": "You turn structured sports trend summaries into brief grounded dashboard storylines.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.2,
-        max_tokens=120,
-    )
-    return (resp.choices[0].message.content or "").strip() or "Not enough data yet."
-
-
-def build_storylines(db: Session, *, sport: str, season: int, season_type: str, team_code: Optional[str] = None, limit: int = 6) -> List[Dict[str, Any]]:
+def build_storylines(
+    db: Session,
+    *,
+    sport: str,
+    season: int,
+    season_type: str,
+    team_code: Optional[str] = None,
+    limit: int = 6,
+) -> List[Dict[str, Any]]:
     sport = normalize_sport(sport)
     season_type = normalize_season_type(season_type)
     team_code = (team_code or "").upper().strip() or None
@@ -192,14 +176,7 @@ def build_storylines(db: Session, *, sport: str, season: int, season_type: str, 
         if item["id"] in seen or len(out) >= limit:
             continue
         seen.add(item["id"])
-        try:
-            item["caption"] = _generate_storyline_text(item, sport=sport, season=season, season_type=season_type)
-        except Exception:
-            support = item["support"]
-            item["caption"] = (
-                f"{item['team_label']} has a {item['category']} signal in the latest sample. "
-                f"Recent record: {support.get('recent_record')}, last-5 margin: {support.get('last5_avg_margin')}."
-            )
+        item["caption"] = storyline_caption(item, sport)
         out.append(item)
 
     _cache_set(cache_key, json.dumps(out), STORYLINES_TTL_SECONDS)
@@ -220,9 +197,12 @@ def _build_query_context(
         selected = [s for s in summaries if s["team_code"] in teams][:2]
         return {"mode": "team_compare", "items": selected}
 
-    if query_type == "team_trend":
+    if query_type in {"team_trend", "stat_explain"}:
         selected = [s for s in summaries if s["team_code"] in teams] if teams else summaries[:1]
-        return {"mode": "team_trend", "items": selected[:2]}
+        return {"mode": query_type, "items": selected[:2]}
+
+    if query_type in {"smalltalk", "unknown", "clarify_team"}:
+        return {"mode": query_type, "items": []}
 
     sorted_rows = _sort_rows(summaries, metric_focus, direction)
     return {
@@ -260,11 +240,20 @@ def _fallback_answer(context: Dict[str, Any], route: Dict[str, Any]) -> str:
     )
 
 
-def answer_query(db: Session, *, sport: str, season: int, season_type: str, question: str, team_code: Optional[str] = None) -> Dict[str, Any]:
+def answer_query(
+    db: Session,
+    *,
+    sport: str,
+    season: int,
+    season_type: str,
+    question: str,
+    team_code: Optional[str] = None,
+) -> Dict[str, Any]:
     sport = normalize_sport(sport)
     season_type = normalize_season_type(season_type)
     team_code = (team_code or "").upper().strip() or None
     question = (question or "").strip()
+
     if not question:
         return {
             "assistant_name": "Pulse",
@@ -275,7 +264,7 @@ def answer_query(db: Session, *, sport: str, season: int, season_type: str, ques
         }
 
     question_key = _stable_hash(question.lower())
-    cache_key = f"ai:query:{sport}:{season}:{season_type}:{team_code or 'all'}:{question_key}"
+    cache_key = f"ai:query:v3:{sport}:{season}:{season_type}:{team_code or 'all'}:{question_key}"
     cached = _cache_get(cache_key)
     if cached:
         try:
@@ -283,16 +272,50 @@ def answer_query(db: Session, *, sport: str, season: int, season_type: str, ques
         except Exception:
             pass
 
-    summaries = compute_league_trend_summaries(db, sport=sport, season=season, season_type=season_type, team_code=team_code)
+    summaries = compute_league_trend_summaries(
+        db,
+        sport=sport,
+        season=season,
+        season_type=season_type,
+        team_code=team_code,
+    )
     if not summaries:
-        return {"assistant_name": "Pulse", "answer": "Not enough data yet.", "supporting_items": [], "storylines": [], "route": None}
+        return {
+            "assistant_name": "Pulse",
+            "answer": "Not enough data yet.",
+            "supporting_items": [],
+            "storylines": [],
+            "route": None,
+        }
 
     known_codes = {s["team_code"] for s in summaries}
     route = route_query(question=question, known_codes=known_codes, team_filter=team_code)
     context = _build_query_context(summaries, route=route)
     items = context.get("items") or []
 
-    if route["query_type"] == "team_trend" and route.get("teams"):
+    if route["query_type"] in {"smalltalk", "unknown"}:
+        result = {
+            "assistant_name": "Pulse",
+            "answer": generate_smalltalk_response(question),
+            "supporting_items": [],
+            "storylines": [],
+            "route": route,
+        }
+        _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
+        return result
+
+    if route["query_type"] == "clarify_team":
+        result = {
+            "assistant_name": "Pulse",
+            "answer": route.get("message") or "Which team are you asking about?",
+            "supporting_items": [],
+            "storylines": [],
+            "route": route,
+        }
+        _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
+        return result
+
+    if route["query_type"] in {"team_trend", "stat_explain"} and route.get("teams"):
         direct = compute_team_trend_summary(
             db,
             sport=sport,
@@ -312,45 +335,8 @@ def answer_query(db: Session, *, sport: str, season: int, season_type: str, ques
         team_code=team_code,
         limit=4,
     )
-
-    payload = {
-        "sport": sport,
-        "season": season,
-        "season_type": season_type,
-        "question": question,
-        "team_filter": team_code,
-        "route": route,
-        "context": context,
-        "storylines": storylines,
-        "scoring_term": POINTS_LABEL.get(sport, "points"),
-    }
-
-    user_prompt = (
-        "Answer the user's sports analytics question using ONLY the structured context.\n"
-        "Rules:\n"
-        "- Do not invent stats, players, or dates.\n"
-        "- Use the route metadata to understand the question type.\n"
-        "- Mention the key numeric evidence from the provided items.\n"
-        "- Keep it concise but useful, usually 2-4 sentences.\n"
-        "- If the answer cannot be supported by the context, say 'Not enough data yet.'\n\n"
-        f"Context: {json.dumps(payload, sort_keys=True)}"
-    )
-
-    try:
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are Pulse, the SportLytics analytics assistant. You answer with grounded, evidence-based sports analysis.",
-                },
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.2,
-            max_tokens=260,
-        )
-        answer = (resp.choices[0].message.content or "").strip() or "Not enough data yet."
-    except Exception:
+    answer = answer_for_route(route, context, sport)
+    if not answer:
         answer = _fallback_answer(context, route)
 
     result = {
