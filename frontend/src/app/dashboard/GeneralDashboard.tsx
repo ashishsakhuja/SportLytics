@@ -407,10 +407,9 @@ export default function GeneralDashboard() {
               Signal Center →
             </Link>
 
-
             <Link
               href="/dashboard/community"
-              className="rounded-full px-4 py-2 text-xs font-semibold border border-sky-400/30 bg-sky-500/10 text-sky-100 hover:bg-sky-500/15 transition"
+              className="rounded-full px-4 py-2 text-xs font-semibold border border-cyan-400/30 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/15 transition"
             >
               Community →
             </Link>

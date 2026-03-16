@@ -206,3 +206,58 @@ class TeamGameStats(Base):
         UniqueConstraint("sport", "game_id", "team_code", name="ux_team_game_stats"),
         Index("ix_team_game_stats_sport_team_season", "sport", "team_code", "season"),
     )
+
+
+# -----------------------------
+# Community Models
+# -----------------------------
+
+class CommunityGroup(Base):
+    __tablename__ = "community_groups"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sport: Mapped[str | None] = mapped_column(String(30), index=True, nullable=True)
+    is_private: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_by: Mapped[str] = mapped_column(String(80), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CommunityGroupMember(Base):
+    __tablename__ = "community_group_members"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(Integer, index=True)
+    member_name: Mapped[str] = mapped_column(String(80), index=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("group_id", "member_name", name="ux_community_group_member"),
+    )
+
+
+class CommunityThread(Base):
+    __tablename__ = "community_threads"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(Integer, index=True)
+    title: Mapped[str] = mapped_column(String(220), index=True)
+    created_by: Mapped[str] = mapped_column(String(80), index=True)
+    is_private: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    auto_source_kind: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    auto_source_key: Mapped[str | None] = mapped_column(String(160), nullable=True, unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CommunityMessage(Base):
+    __tablename__ = "community_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    thread_id: Mapped[int] = mapped_column(Integer, index=True)
+    author: Mapped[str] = mapped_column(String(80), index=True)
+    body: Mapped[str] = mapped_column(Text)
+    shared_plot_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    shared_plot_url: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

@@ -2,597 +2,491 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { apiGet, apiPost } from "@/lib/api";
 
-type Message = {
-  id: string;
-  author: string;
-  text: string;
-  createdAt: string;
-  sharedPlotTitle?: string;
-  sharedPlotUrl?: string;
+type Group = {
+  id: number;
+  name: string;
+  description: string | null;
+  sport: string | null;
+  is_private: boolean;
+  created_by: string;
+  created_at: string | null;
+  member_count: number;
+  thread_count: number;
+  is_member: boolean;
+  latest_thread_title: string | null;
+  latest_activity_at: string | null;
 };
 
 type Thread = {
-  id: string;
+  id: number;
+  group_id: number;
   title: string;
-  createdBy: string;
-  createdAt: string;
-  visibility: "public" | "private";
-  messages: Message[];
+  created_by: string;
+  is_private: boolean;
+  auto_source_kind: string | null;
+  auto_source_key: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  message_count: number;
+  latest_message_preview: string | null;
 };
 
-type Group = {
-  id: string;
-  name: string;
-  description: string;
-  isPrivate: boolean;
-  members: number;
-  sport: string;
-  threads: Thread[];
+type Message = {
+  id: number;
+  thread_id: number;
+  author: string;
+  body: string;
+  shared_plot_title: string | null;
+  shared_plot_url: string | null;
+  created_at: string | null;
 };
 
-type CommunityState = {
-  groups: Group[];
+type AutoSyncResponse = {
+  ok: boolean;
+  created_count: number;
+  skipped_count: number;
+  lookback_days: number;
+  sports: string[];
 };
 
-const STORAGE_KEY = "sportlytics-community-v1";
-
-function uid(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function timeAgo(iso: string) {
+function ago(iso: string | null) {
+  if (!iso) return "—";
   const d = new Date(iso);
   const diff = Math.max(0, Date.now() - d.getTime());
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function seedCommunity(): CommunityState {
-  const now = Date.now();
-  return {
-    groups: [
-      {
-        id: "group-nfl",
-        name: "NFL Film Room",
-        description: "Share team trends, matchup plots, and weekly takes.",
-        isPrivate: false,
-        members: 182,
-        sport: "NFL",
-        threads: [
-          {
-            id: "thread-nfl-1",
-            title: "Which offense is heating up fastest?",
-            createdBy: "PulseFan21",
-            createdAt: new Date(now - 1000 * 60 * 80).toISOString(),
-            visibility: "public",
-            messages: [
-              {
-                id: "msg-nfl-1",
-                author: "PulseFan21",
-                text: "I think Miami and Detroit are the biggest recent movers. Anyone have a plot comparing last 5 vs previous 5 offensive output?",
-                createdAt: new Date(now - 1000 * 60 * 78).toISOString(),
-              },
-              {
-                id: "msg-nfl-2",
-                author: "GridironGraphs",
-                text: "I shared a rolling points plot below. Detroit's consistency jumps out more than the raw ceiling.",
-                createdAt: new Date(now - 1000 * 60 * 52).toISOString(),
-                sharedPlotTitle: "Rolling Points For — DET last 10",
-                sharedPlotUrl: "/dashboard/nfl",
-              },
-            ],
-          },
-        ],
-      },
-      {
-        id: "group-nba",
-        name: "NBA Shot Quality",
-        description: "Discuss team form, shot profile changes, and playoff trends.",
-        isPrivate: false,
-        members: 126,
-        sport: "NBA",
-        threads: [
-          {
-            id: "thread-nba-1",
-            title: "Best under-the-radar playoff riser",
-            createdBy: "HoopsIntel",
-            createdAt: new Date(now - 1000 * 60 * 220).toISOString(),
-            visibility: "public",
-            messages: [
-              {
-                id: "msg-nba-1",
-                author: "HoopsIntel",
-                text: "I'm watching teams whose defense has improved over the last 5 without the offense dropping off.",
-                createdAt: new Date(now - 1000 * 60 * 215).toISOString(),
-              },
-            ],
-          },
-        ],
-      },
-      {
-        id: "group-private-friends",
-        name: "Friends Pick Circle",
-        description: "Private room for your own sports discussion group.",
-        isPrivate: true,
-        members: 8,
-        sport: "Mixed",
-        threads: [
-          {
-            id: "thread-private-1",
-            title: "Sunday locks",
-            createdBy: "Ash",
-            createdAt: new Date(now - 1000 * 60 * 35).toISOString(),
-            visibility: "private",
-            messages: [
-              {
-                id: "msg-private-1",
-                author: "Ash",
-                text: "Let's keep this room just for our personal slate notes and plot shares.",
-                createdAt: new Date(now - 1000 * 60 * 33).toISOString(),
-              },
-            ],
-          },
-        ],
-      },
-    ],
-  };
-}
+const AUTO_SPORT_OPTIONS = ["all", "nfl", "nba", "mlb", "nhl"] as const;
 
 export default function CommunityPage() {
-  const [community, setCommunity] = useState<CommunityState>({ groups: [] });
-  const [ready, setReady] = useState(false);
-  const [selectedGroupId, setSelectedGroupId] = useState<string>("group-nfl");
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>("thread-nfl-1");
-  const [newMessage, setNewMessage] = useState("");
-  const [author, setAuthor] = useState("You");
-  const [plotTitle, setPlotTitle] = useState("");
-  const [plotUrl, setPlotUrl] = useState("");
-  const [newThreadTitle, setNewThreadTitle] = useState("");
-  const [newThreadVisibility, setNewThreadVisibility] = useState<"public" | "private">("public");
-  const [newGroupName, setNewGroupName] = useState("");
-  const [newGroupDescription, setNewGroupDescription] = useState("");
-  const [newGroupPrivate, setNewGroupPrivate] = useState(false);
+  const [viewer, setViewer] = useState("Ash");
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
+  const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
 
-  useEffect(() => {
+  const [groupName, setGroupName] = useState("");
+  const [groupDescription, setGroupDescription] = useState("");
+  const [groupSport, setGroupSport] = useState("Mixed");
+  const [groupPrivate, setGroupPrivate] = useState(false);
+
+  const [threadTitle, setThreadTitle] = useState("");
+  const [threadBody, setThreadBody] = useState("");
+  const [threadPlotTitle, setThreadPlotTitle] = useState("");
+  const [threadPlotUrl, setThreadPlotUrl] = useState("");
+
+  const [messageBody, setMessageBody] = useState("");
+  const [messagePlotTitle, setMessagePlotTitle] = useState("");
+  const [messagePlotUrl, setMessagePlotUrl] = useState("");
+
+  const [autoSport, setAutoSport] = useState<(typeof AUTO_SPORT_OPTIONS)[number]>("all");
+  const [lookbackDays, setLookbackDays] = useState(7);
+
+  async function loadGroups(preferredGroupId?: number | null, preferredThreadId?: number | null) {
+    setLoading(true);
+    setError(null);
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      const parsed = raw ? (JSON.parse(raw) as CommunityState) : seedCommunity();
-      setCommunity(parsed);
-      setSelectedGroupId(parsed.groups[0]?.id ?? "");
-      setSelectedThreadId(parsed.groups[0]?.threads[0]?.id ?? null);
-    } catch {
-      const seeded = seedCommunity();
-      setCommunity(seeded);
-      setSelectedGroupId(seeded.groups[0]?.id ?? "");
-      setSelectedThreadId(seeded.groups[0]?.threads[0]?.id ?? null);
+      const res = await apiGet<{ items: Group[] }>(`/community/groups?viewer=${encodeURIComponent(viewer)}`);
+      setGroups(res.items);
+      const nextGroupId = preferredGroupId ?? res.items[0]?.id ?? null;
+      setSelectedGroupId(nextGroupId);
+      if (nextGroupId) {
+        await loadThreads(nextGroupId, preferredThreadId);
+      } else {
+        setThreads([]);
+        setMessages([]);
+        setSelectedThreadId(null);
+      }
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load community groups");
     } finally {
-      setReady(true);
+      setLoading(false);
     }
-  }, []);
+  }
+
+  async function loadThreads(groupId: number, preferredThreadId?: number | null) {
+    try {
+      const res = await apiGet<{ group: Group; items: Thread[] }>(`/community/groups/${groupId}/threads?viewer=${encodeURIComponent(viewer)}`);
+      setThreads(res.items);
+      const nextThreadId = preferredThreadId ?? res.items[0]?.id ?? null;
+      setSelectedThreadId(nextThreadId);
+      if (nextThreadId) {
+        await loadMessages(nextThreadId);
+      } else {
+        setMessages([]);
+      }
+    } catch (e: any) {
+      setThreads([]);
+      setMessages([]);
+      setSelectedThreadId(null);
+      setError(e?.message ?? "Failed to load threads");
+    }
+  }
+
+  async function loadMessages(threadId: number) {
+    try {
+      const res = await apiGet<{ messages: Message[] }>(`/community/threads/${threadId}?viewer=${encodeURIComponent(viewer)}`);
+      setMessages(res.messages);
+    } catch (e: any) {
+      setMessages([]);
+      setError(e?.message ?? "Failed to load thread");
+    }
+  }
 
   useEffect(() => {
-    if (!ready) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(community));
-  }, [community, ready]);
+    loadGroups();
+  }, [viewer]);
 
-  const groups = community.groups;
   const selectedGroup = useMemo(
-    () => groups.find((g) => g.id === selectedGroupId) ?? groups[0] ?? null,
+    () => groups.find((g) => g.id === selectedGroupId) ?? null,
     [groups, selectedGroupId]
   );
+
   const selectedThread = useMemo(
-    () => selectedGroup?.threads.find((t) => t.id === selectedThreadId) ?? selectedGroup?.threads[0] ?? null,
-    [selectedGroup, selectedThreadId]
+    () => threads.find((t) => t.id === selectedThreadId) ?? null,
+    [threads, selectedThreadId]
   );
 
-  function updateGroups(updater: (prev: Group[]) => Group[]) {
-    setCommunity((prev) => ({ ...prev, groups: updater(prev.groups) }));
+  async function createGroup() {
+    if (!groupName.trim()) return;
+    setBusy(true);
+    setError(null);
+    setSyncNote(null);
+    try {
+      const res = await apiPost<{ ok: boolean; group: Group }>("/community/groups", {
+        name: groupName,
+        description: groupDescription,
+        sport: groupSport,
+        is_private: groupPrivate,
+        created_by: viewer,
+      });
+      setGroupName("");
+      setGroupDescription("");
+      setGroupSport("Mixed");
+      setGroupPrivate(false);
+      await loadGroups(res.group.id, null);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to create group");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  function handleSelectGroup(groupId: string) {
-    setSelectedGroupId(groupId);
-    const group = groups.find((g) => g.id === groupId);
-    setSelectedThreadId(group?.threads[0]?.id ?? null);
+  async function joinGroup(groupId: number) {
+    setBusy(true);
+    setError(null);
+    setSyncNote(null);
+    try {
+      await apiPost(`/community/groups/${groupId}/join`, { viewer });
+      await loadGroups(groupId, selectedThreadId);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to join group");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  function createThread() {
-    if (!selectedGroup || !newThreadTitle.trim()) return;
-    const thread: Thread = {
-      id: uid("thread"),
-      title: newThreadTitle.trim(),
-      createdBy: author.trim() || "You",
-      createdAt: new Date().toISOString(),
-      visibility: newThreadVisibility,
-      messages: [
-        {
-          id: uid("msg"),
-          author: author.trim() || "You",
-          text: "Thread created. Start the discussion.",
-          createdAt: new Date().toISOString(),
-        },
-      ],
-    };
-
-    updateGroups((prev) =>
-      prev.map((group) =>
-        group.id === selectedGroup.id
-          ? { ...group, threads: [thread, ...group.threads] }
-          : group
-      )
-    );
-    setSelectedThreadId(thread.id);
-    setNewThreadTitle("");
-    setNewThreadVisibility(selectedGroup.isPrivate ? "private" : "public");
+  async function createThread() {
+    if (!selectedGroupId || !threadTitle.trim() || !threadBody.trim()) return;
+    setBusy(true);
+    setError(null);
+    setSyncNote(null);
+    try {
+      const res = await apiPost<{ ok: boolean; thread: Thread }>(`/community/groups/${selectedGroupId}/threads`, {
+        title: threadTitle,
+        body: threadBody,
+        author: viewer,
+        shared_plot_title: threadPlotTitle,
+        shared_plot_url: threadPlotUrl,
+        is_private: selectedGroup?.is_private ?? false,
+      });
+      setThreadTitle("");
+      setThreadBody("");
+      setThreadPlotTitle("");
+      setThreadPlotUrl("");
+      await loadGroups(selectedGroupId, res.thread.id);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to create thread");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  function createGroup() {
-    if (!newGroupName.trim()) return;
-    const group: Group = {
-      id: uid("group"),
-      name: newGroupName.trim(),
-      description: newGroupDescription.trim() || "Custom community room.",
-      isPrivate: newGroupPrivate,
-      members: 1,
-      sport: "Mixed",
-      threads: [],
-    };
-    updateGroups((prev) => [group, ...prev]);
-    setSelectedGroupId(group.id);
-    setSelectedThreadId(null);
-    setNewGroupName("");
-    setNewGroupDescription("");
-    setNewGroupPrivate(false);
+  async function sendMessage() {
+    if (!selectedThreadId || !messageBody.trim()) return;
+    setBusy(true);
+    setError(null);
+    setSyncNote(null);
+    try {
+      await apiPost(`/community/threads/${selectedThreadId}/messages`, {
+        author: viewer,
+        body: messageBody,
+        shared_plot_title: messagePlotTitle,
+        shared_plot_url: messagePlotUrl,
+      });
+      setMessageBody("");
+      setMessagePlotTitle("");
+      setMessagePlotUrl("");
+      await loadMessages(selectedThreadId);
+      if (selectedGroupId) await loadThreads(selectedGroupId, selectedThreadId);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to send message");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  function sendMessage() {
-    if (!selectedGroup || !selectedThread || !newMessage.trim()) return;
-
-    const message: Message = {
-      id: uid("msg"),
-      author: author.trim() || "You",
-      text: newMessage.trim(),
-      createdAt: new Date().toISOString(),
-      sharedPlotTitle: plotTitle.trim() || undefined,
-      sharedPlotUrl: plotUrl.trim() || undefined,
-    };
-
-    updateGroups((prev) =>
-      prev.map((group) =>
-        group.id !== selectedGroup.id
-          ? group
-          : {
-              ...group,
-              threads: group.threads.map((thread) =>
-                thread.id !== selectedThread.id
-                  ? thread
-                  : {
-                      ...thread,
-                      messages: [...thread.messages, message],
-                    }
-              ),
-            }
-      )
-    );
-
-    setNewMessage("");
-    setPlotTitle("");
-    setPlotUrl("");
-  }
-
-  if (!ready) {
-    return (
-      <main className="min-h-screen bg-black px-6 py-8 text-white">
-        <div className="mx-auto max-w-7xl text-white/70">Loading community…</div>
-      </main>
-    );
+  async function syncPostgameThreads() {
+    setBusy(true);
+    setError(null);
+    setSyncNote(null);
+    try {
+      const res = await apiPost<AutoSyncResponse>("/community/auto/postgames/sync", {
+        viewer,
+        sport: autoSport === "all" ? null : autoSport,
+        lookback_days: lookbackDays,
+        limit: 60,
+      });
+      setSyncNote(`Created ${res.created_count} postgame thread${res.created_count === 1 ? "" : "s"} and skipped ${res.skipped_count} existing one${res.skipped_count === 1 ? "" : "s"}.`);
+      await loadGroups(selectedGroupId, selectedThreadId);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to sync postgame threads");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <main className="min-h-screen bg-black text-white">
-      <header className="sticky top-0 z-20 border-b border-white/10 bg-black/70 backdrop-blur-md">
+      <header className="sticky top-0 z-20 border-b border-white/10 bg-black/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
-            <Link href="/dashboard" className="text-white/80 hover:text-white">
-              ←
-            </Link>
+            <Link href="/dashboard" className="text-white/80 hover:text-white">←</Link>
             <div>
               <div className="text-lg font-semibold tracking-tight">Community</div>
-              <div className="text-xs text-white/60">
-                Group chats for sports takes, plot sharing, and private discussion rooms
-              </div>
+              <div className="text-xs text-white/60">Public and private sports group discussions with plot sharing and auto postgame threads.</div>
             </div>
           </div>
-
-          <div className="flex items-center gap-2 text-xs text-white/70">
-            <span className="rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1 text-emerald-200">
-              Frontend prototype
-            </span>
-            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
-              local storage only
-            </span>
+          <div className="flex items-center gap-2">
+            <input
+              value={viewer}
+              onChange={(e) => setViewer(e.target.value)}
+              className="w-36 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/25"
+              placeholder="Display name"
+            />
+            <button
+              onClick={() => loadGroups(selectedGroupId, selectedThreadId)}
+              className="rounded-xl border border-white/15 bg-white/10 px-4 py-2 text-sm hover:bg-white/15"
+            >
+              Refresh
+            </button>
           </div>
         </div>
       </header>
 
       <div className="mx-auto max-w-7xl px-6 py-8">
-        <div className="mb-6 flex flex-wrap gap-2">
-          <Link
-            href="/dashboard"
-            className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold hover:bg-white/10"
-          >
-            General Dashboard
-          </Link>
-          <Link
-            href="/dashboard/custom-builder"
-            className="rounded-full border border-fuchsia-400/30 bg-fuchsia-500/10 px-4 py-2 text-xs font-semibold text-fuchsia-100 hover:bg-fuchsia-500/15"
-          >
-            Custom Builder
-          </Link>
-          <Link
-            href="/dashboard/signal-center"
-            className="rounded-full border border-fuchsia-400/30 bg-fuchsia-500/10 px-4 py-2 text-xs font-semibold text-fuchsia-100 hover:bg-fuchsia-500/15"
-          >
-            Signal Center
-          </Link>
+        {error ? (
+          <div className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">{error}</div>
+        ) : null}
+        {syncNote ? (
+          <div className="mb-4 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">{syncNote}</div>
+        ) : null}
+
+        <div className="mb-6 rounded-2xl border border-white/10 bg-white/5 p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-base font-semibold">Auto-generate postgame debate threads</div>
+              <div className="mt-1 text-sm text-white/65">
+                Pull recent final games from SportLytics data and create one public discussion thread per game.
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <select
+                value={autoSport}
+                onChange={(e) => setAutoSport(e.target.value as (typeof AUTO_SPORT_OPTIONS)[number])}
+                className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+              >
+                {AUTO_SPORT_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option === "all" ? "All sports" : option.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min={1}
+                max={45}
+                value={lookbackDays}
+                onChange={(e) => setLookbackDays(Number(e.target.value) || 7)}
+                className="w-24 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+              />
+              <button
+                onClick={syncPostgameThreads}
+                disabled={busy}
+                className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-500/15 disabled:opacity-60"
+              >
+                Sync Postgame Threads
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
-          <section className="xl:col-span-3 sl-plasma-card">
-            <div className="sl-plasma-inner rounded-2xl border border-white/10 bg-white/5 p-5">
-              <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold">Groups</h2>
-                <span className="text-xs text-white/60">iMessage-style rooms</span>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {groups.map((group) => {
-                  const active = group.id === selectedGroup?.id;
-                  return (
-                    <button
-                      key={group.id}
-                      onClick={() => handleSelectGroup(group.id)}
-                      className={`w-full rounded-2xl border p-4 text-left transition ${
-                        active
-                          ? "border-sky-400/40 bg-sky-500/10"
-                          : "border-white/10 bg-black/30 hover:bg-black/40"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <div className="font-semibold">{group.name}</div>
-                          <div className="mt-1 text-xs text-white/60">{group.description}</div>
-                        </div>
-                        <span
-                          className={`rounded-full px-2 py-1 text-[11px] ${
-                            group.isPrivate
-                              ? "border border-amber-400/30 bg-amber-500/10 text-amber-200"
-                              : "border border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-                          }`}
-                        >
-                          {group.isPrivate ? "Private" : "Public"}
-                        </span>
-                      </div>
-                      <div className="mt-3 flex items-center justify-between text-[11px] text-white/55">
-                        <span>{group.sport}</span>
-                        <span>{group.members} members</span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-4">
-                <div className="text-sm font-semibold">Create group</div>
-                <div className="mt-3 space-y-2">
-                  <input
-                    value={newGroupName}
-                    onChange={(e) => setNewGroupName(e.target.value)}
-                    placeholder="Group name"
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/25"
-                  />
-                  <textarea
-                    value={newGroupDescription}
-                    onChange={(e) => setNewGroupDescription(e.target.value)}
-                    placeholder="What is this room for?"
-                    rows={3}
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/25"
-                  />
-                  <label className="flex items-center gap-2 text-xs text-white/70">
-                    <input
-                      type="checkbox"
-                      checked={newGroupPrivate}
-                      onChange={(e) => setNewGroupPrivate(e.target.checked)}
-                    />
-                    Make this group private
-                  </label>
-                  <button
-                    onClick={createGroup}
-                    className="w-full rounded-xl border border-sky-400/30 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-100 hover:bg-sky-500/15"
-                  >
-                    Create Group
-                  </button>
-                </div>
-              </div>
+          <section className="xl:col-span-3 rounded-2xl border border-white/10 bg-white/5 p-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold">Groups</h2>
+              <span className="text-xs text-white/60">{groups.length} visible</span>
             </div>
-          </section>
 
-          <section className="xl:col-span-4 sl-plasma-card">
-            <div className="sl-plasma-inner rounded-2xl border border-white/10 bg-white/5 p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold">Threads</h2>
-                  <div className="text-xs text-white/60">
-                    {selectedGroup ? `${selectedGroup.name} · ${selectedGroup.threads.length} threads` : "No group selected"}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 p-4">
-                <div className="text-sm font-semibold">New thread</div>
-                <div className="mt-3 space-y-2">
-                  <input
-                    value={newThreadTitle}
-                    onChange={(e) => setNewThreadTitle(e.target.value)}
-                    placeholder="Thread title"
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/25"
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      value={author}
-                      onChange={(e) => setAuthor(e.target.value)}
-                      placeholder="Display name"
-                      className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/25"
-                    />
-                    <select
-                      value={newThreadVisibility}
-                      onChange={(e) => setNewThreadVisibility(e.target.value as "public" | "private")}
-                      className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/25"
-                    >
-                      <option value="public">Public</option>
-                      <option value="private">Private</option>
-                    </select>
-                  </div>
-                  <button
-                    onClick={createThread}
-                    disabled={!selectedGroup}
-                    className="w-full rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-4 py-2 text-sm font-semibold text-fuchsia-100 hover:bg-fuchsia-500/15 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Create Thread
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {selectedGroup?.threads.length ? (
-                  selectedGroup.threads.map((thread) => {
-                    const active = thread.id === selectedThread?.id;
-                    const lastMessage = thread.messages[thread.messages.length - 1];
-                    return (
-                      <button
-                        key={thread.id}
-                        onClick={() => setSelectedThreadId(thread.id)}
-                        className={`w-full rounded-2xl border p-4 text-left transition ${
-                          active
-                            ? "border-fuchsia-400/35 bg-fuchsia-500/10"
-                            : "border-white/10 bg-black/30 hover:bg-black/40"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="font-semibold">{thread.title}</div>
-                            <div className="mt-1 text-xs text-white/60">
-                              Started by {thread.createdBy} · {timeAgo(thread.createdAt)}
-                            </div>
-                          </div>
-                          <span className={`rounded-full px-2 py-1 text-[11px] ${thread.visibility === "private" ? "border border-amber-400/30 bg-amber-500/10 text-amber-200" : "border border-emerald-400/30 bg-emerald-500/10 text-emerald-200"}`}>
-                            {thread.visibility}
-                          </span>
-                        </div>
-                        <div className="mt-3 text-sm text-white/75 line-clamp-2">
-                          {lastMessage?.text ?? "No messages yet."}
-                        </div>
-                      </button>
-                    );
-                  })
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 p-6 text-sm text-white/60">
-                    No threads yet. Create the first discussion for this room.
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-
-          <section className="xl:col-span-5 sl-plasma-card">
-            <div className="sl-plasma-inner rounded-2xl border border-white/10 bg-white/5 p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold">Conversation</h2>
-                  <div className="text-xs text-white/60">
-                    {selectedThread ? `${selectedThread.title} · ${selectedThread.messages.length} messages` : "Select a thread to join the conversation"}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 max-h-[560px] space-y-3 overflow-y-auto pr-1">
-                {selectedThread ? (
-                  selectedThread.messages.map((message) => (
-                    <div key={message.id} className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="font-semibold">{message.author}</div>
-                        <div className="text-xs text-white/50">{timeAgo(message.createdAt)}</div>
-                      </div>
-                      <div className="mt-2 text-sm leading-6 text-white/85">{message.text}</div>
-
-                      {message.sharedPlotTitle || message.sharedPlotUrl ? (
-                        <div className="mt-3 rounded-2xl border border-sky-400/25 bg-sky-500/10 p-4">
-                          <div className="text-xs uppercase tracking-[0.2em] text-sky-200/80">Shared Plot</div>
-                          <div className="mt-1 font-semibold text-sky-50">
-                            {message.sharedPlotTitle || "Untitled plot"}
-                          </div>
-                          <div className="mt-1 text-xs text-sky-100/80 break-all">
-                            {message.sharedPlotUrl || "No URL provided"}
-                          </div>
-                          {message.sharedPlotUrl ? (
-                            <Link
-                              href={message.sharedPlotUrl}
-                              className="mt-3 inline-flex rounded-xl border border-sky-300/30 bg-white/10 px-3 py-2 text-xs font-semibold text-sky-50 hover:bg-white/15"
-                            >
-                              Open Plot →
-                            </Link>
-                          ) : null}
-                        </div>
-                      ) : null}
+            <div className="mt-4 space-y-3">
+              {groups.map((group) => (
+                <button
+                  key={group.id}
+                  onClick={() => {
+                    setSelectedGroupId(group.id);
+                    loadThreads(group.id);
+                  }}
+                  className={`w-full rounded-2xl border p-4 text-left transition ${selectedGroupId === group.id ? "border-cyan-400/40 bg-cyan-500/10" : "border-white/10 bg-black/30 hover:bg-black/40"}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold">{group.name}</div>
+                      <div className="mt-1 text-xs text-white/65">{group.description}</div>
                     </div>
-                  ))
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 p-6 text-sm text-white/60">
-                    Pick a thread on the left to view messages.
+                    <span className={`rounded-full px-2 py-1 text-[10px] ${group.is_private ? "border border-amber-400/30 bg-amber-500/10 text-amber-100" : "border border-emerald-400/30 bg-emerald-500/10 text-emerald-100"}`}>
+                      {group.is_private ? "Private" : "Public"}
+                    </span>
                   </div>
-                )}
-              </div>
+                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-white/60">
+                    <span>{group.sport ?? "Mixed"}</span>
+                    <span>• {group.member_count} members</span>
+                    <span>• {group.thread_count} threads</span>
+                    {group.latest_activity_at ? <span>• active {ago(group.latest_activity_at)}</span> : null}
+                  </div>
+                  {group.is_private && !group.is_member ? (
+                    <div className="mt-3">
+                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/70">Join to view</span>
+                    </div>
+                  ) : null}
+                </button>
+              ))}
+            </div>
 
-              <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-4">
-                <div className="text-sm font-semibold">Send message</div>
-                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <input
-                    value={plotTitle}
-                    onChange={(e) => setPlotTitle(e.target.value)}
-                    placeholder="Optional shared plot title"
-                    className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/25"
-                  />
-                  <input
-                    value={plotUrl}
-                    onChange={(e) => setPlotUrl(e.target.value)}
-                    placeholder="Optional plot URL (ex: /dashboard/nfl)"
-                    className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/25"
-                  />
+            <div className="mt-6 border-t border-white/10 pt-5">
+              <h3 className="text-sm font-semibold">Create group</h3>
+              <div className="mt-3 space-y-3">
+                <input value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group name" className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-white/20" />
+                <input value={groupDescription} onChange={(e) => setGroupDescription(e.target.value)} placeholder="Description" className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-white/20" />
+                <input value={groupSport} onChange={(e) => setGroupSport(e.target.value)} placeholder="Sport" className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-white/20" />
+                <label className="flex items-center gap-2 text-sm text-white/75">
+                  <input type="checkbox" checked={groupPrivate} onChange={(e) => setGroupPrivate(e.target.checked)} />
+                  Private group
+                </label>
+                <button onClick={createGroup} disabled={busy} className="w-full rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-100 hover:bg-cyan-500/15 disabled:opacity-60">Create Group</button>
+              </div>
+            </div>
+          </section>
+
+          <section className="xl:col-span-3 rounded-2xl border border-white/10 bg-white/5 p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold">Threads</h2>
+                <div className="text-xs text-white/60">{selectedGroup ? selectedGroup.name : "Select a group"}</div>
+              </div>
+              {selectedGroup?.is_private && !selectedGroup.is_member ? (
+                <button onClick={() => joinGroup(selectedGroup.id)} disabled={busy} className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100 hover:bg-amber-500/15 disabled:opacity-60">Join group</button>
+              ) : null}
+            </div>
+
+            {selectedGroup?.is_private && !selectedGroup.is_member ? (
+              <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 p-4 text-sm text-white/70">This is a private room. Join the group to view its threads and messages.</div>
+            ) : (
+              <>
+                <div className="mt-4 space-y-3">
+                  {threads.map((thread) => (
+                    <button
+                      key={thread.id}
+                      onClick={() => {
+                        setSelectedThreadId(thread.id);
+                        loadMessages(thread.id);
+                      }}
+                      className={`w-full rounded-2xl border p-4 text-left transition ${selectedThreadId === thread.id ? "border-fuchsia-400/40 bg-fuchsia-500/10" : "border-white/10 bg-black/30 hover:bg-black/40"}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm font-semibold">{thread.title}</div>
+                        {thread.auto_source_kind === "postgame" ? (
+                          <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2 py-1 text-[10px] text-cyan-100">Auto</span>
+                        ) : null}
+                      </div>
+                      <div className="mt-2 text-xs text-white/60">by {thread.created_by} • {thread.message_count} messages • active {ago(thread.updated_at)}</div>
+                      {thread.latest_message_preview ? <div className="mt-2 line-clamp-2 text-xs text-white/70">{thread.latest_message_preview}</div> : null}
+                    </button>
+                  ))}
+                  {!loading && threads.length === 0 ? <div className="text-sm text-white/60">No threads yet.</div> : null}
                 </div>
-                <textarea
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  placeholder="Drop your take, share a plot, or start a sports debate..."
-                  rows={4}
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/25"
-                />
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                  <div className="text-xs text-white/50">
-                    Public threads are visible to everyone in the community. Private rooms are meant for invite-only conversations.
+
+                <div className="mt-6 border-t border-white/10 pt-5">
+                  <h3 className="text-sm font-semibold">Start a thread</h3>
+                  <div className="mt-3 space-y-3">
+                    <input value={threadTitle} onChange={(e) => setThreadTitle(e.target.value)} placeholder="Thread title" className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-white/20" />
+                    <textarea value={threadBody} onChange={(e) => setThreadBody(e.target.value)} placeholder="Open the discussion…" rows={4} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-white/20" />
+                    <input value={threadPlotTitle} onChange={(e) => setThreadPlotTitle(e.target.value)} placeholder="Optional shared plot title" className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-white/20" />
+                    <input value={threadPlotUrl} onChange={(e) => setThreadPlotUrl(e.target.value)} placeholder="Optional plot link e.g. /dashboard/nfl" className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-white/20" />
+                    <button onClick={createThread} disabled={busy || !selectedGroup} className="w-full rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-4 py-2 text-sm font-medium text-fuchsia-100 hover:bg-fuchsia-500/15 disabled:opacity-60">Create Thread</button>
                   </div>
-                  <button
-                    onClick={sendMessage}
-                    disabled={!selectedThread || !newMessage.trim()}
-                    className="rounded-xl border border-sky-400/30 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-100 hover:bg-sky-500/15 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Send
-                  </button>
                 </div>
+              </>
+            )}
+          </section>
+
+          <section className="xl:col-span-6 rounded-2xl border border-white/10 bg-white/5 p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold">Discussion</h2>
+                <div className="text-xs text-white/60">{selectedThread ? selectedThread.title : "Pick a thread"}</div>
+              </div>
+              {selectedGroup ? (
+                <div className="text-xs text-white/60">{selectedGroup.name}</div>
+              ) : null}
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {messages.map((msg) => (
+                <div key={msg.id} className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold">{msg.author}</div>
+                    <div className="text-xs text-white/55">{ago(msg.created_at)}</div>
+                  </div>
+                  <div className="mt-2 whitespace-pre-wrap text-sm text-white/85">{msg.body}</div>
+                  {msg.shared_plot_title && msg.shared_plot_url ? (
+                    <Link href={msg.shared_plot_url} className="mt-3 inline-flex rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100 hover:bg-cyan-500/15">
+                      View Plot: {msg.shared_plot_title} ↗
+                    </Link>
+                  ) : null}
+                </div>
+              ))}
+              {!loading && messages.length === 0 ? <div className="text-sm text-white/60">No messages yet.</div> : null}
+            </div>
+
+            <div className="mt-6 border-t border-white/10 pt-5">
+              <h3 className="text-sm font-semibold">Reply</h3>
+              <div className="mt-3 space-y-3">
+                <textarea value={messageBody} onChange={(e) => setMessageBody(e.target.value)} placeholder="Drop your take, question, or plot breakdown…" rows={4} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-white/20" />
+                <input value={messagePlotTitle} onChange={(e) => setMessagePlotTitle(e.target.value)} placeholder="Optional shared plot title" className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-white/20" />
+                <input value={messagePlotUrl} onChange={(e) => setMessagePlotUrl(e.target.value)} placeholder="Optional plot link e.g. /dashboard/nba" className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-white/20" />
+                <button onClick={sendMessage} disabled={busy || !selectedThread} className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-60">Send Message</button>
               </div>
             </div>
           </section>
