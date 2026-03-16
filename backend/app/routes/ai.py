@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.services.ai_insights_service import answer_query, build_storylines
-from app.services.ai_service import generate_chart_caption_cached
+from app.services.ai_service import generate_chart_answer_cached, generate_chart_caption_cached
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
@@ -26,6 +26,17 @@ class QueryRequest(BaseModel):
     question: str
 
 
+class ChartQueryRequest(BaseModel):
+    chart_id: str
+    chart_title: str
+    sport: str
+    season: int
+    season_type: str
+    team: str | None = None
+    summary: dict
+    question: str
+
+
 @router.post("/chart-caption")
 def chart_caption(data: ChartCaptionRequest):
     caption = generate_chart_caption_cached(
@@ -37,6 +48,21 @@ def chart_caption(data: ChartCaptionRequest):
         summary=data.summary,
     )
     return {"caption": caption}
+
+
+@router.post("/chart-query")
+def chart_query(data: ChartQueryRequest):
+    answer = generate_chart_answer_cached(
+        chart_id=data.chart_id,
+        chart_title=data.chart_title,
+        sport=data.sport,
+        season=data.season,
+        season_type=data.season_type,
+        team=data.team,
+        summary=data.summary,
+        question=data.question,
+    )
+    return {"answer": answer}
 
 
 @router.get("/storylines")

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -22,6 +22,7 @@ import NflInGameAnalytics from "@/components/NflInGameAnalytics";
 import NbaInGameAnalytics from "@/components/NbaInGameAnalytics";
 import NhlInGameAnalytics from "@/components/NhlInGameAnalytics";
 import MlbInGameAnalytics from "@/components/MlbInGameAnalytics";
+import PlotActions from "@/components/PlotActions";
 
 const SUPPORTED = new Set(["nfl", "nba", "mlb", "nhl"]);
 const SPORT_LABEL: Record<string, string> = {
@@ -406,6 +407,17 @@ export default function SportDashboard({ sport }: { sport: string }) {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  const offenseDefenseRef = useRef<HTMLElement | null>(null);
+  const rollingRef = useRef<HTMLElement | null>(null);
+  const leagueScoringRef = useRef<HTMLElement | null>(null);
+  const standingsRef = useRef<HTMLElement | null>(null);
+  const sosRef = useRef<HTMLElement | null>(null);
+  const recentFormRef = useRef<HTMLElement | null>(null);
+  const homeAwayRef = useRef<HTMLElement | null>(null);
+  const marginRef = useRef<HTMLElement | null>(null);
+  const closeGamesRef = useRef<HTMLElement | null>(null);
+  const scoreDistributionRef = useRef<HTMLElement | null>(null);
 
   // Dropdown styles: readable options
   const selectClass =
@@ -1062,13 +1074,14 @@ const aiScoreDistributionSummary = useMemo(() => {
                   </section>
 
                   {/* Offense vs Defense */}
-                  <section className={cardClass}>
+                  <section ref={offenseDefenseRef} className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
                         Offense vs Defense
                       </h2>
                       <div className="text-xs text-white/60">avg per game</div>
                     </div>
+                    <PlotActions exportRef={offenseDefenseRef} chartId="offense_vs_defense" chartTitle="Offense vs Defense" sport={s} season={season} seasonType={seasonType} team={team} summary={aiOffenseDefenseSummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the ${team} offense vs defense view from the ${s.toUpperCase()} dashboard.`} />
                     <div className="mt-4 h-[320px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <ScatterChart
@@ -1129,13 +1142,14 @@ const aiScoreDistributionSummary = useMemo(() => {
                   </section>
 
                   {/* Rolling Averages */}
-                  <section className={cardClass}>
+                  <section ref={rollingRef} className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
                         Rolling Averages (5-game)
                       </h2>
                       <div className="text-xs text-white/60">{team}</div>
                     </div>
+                    <PlotActions exportRef={rollingRef} chartId="rolling_averages" chartTitle={`${team} Rolling Averages`} sport={s} season={season} seasonType={seasonType} team={team} summary={aiRollingSummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the ${team} rolling averages chart from the ${s.toUpperCase()} dashboard.`} />
                     <div className="mt-4 h-[280px]">
                       {rollingSeries.length === 0 ? (
                         <div className="text-sm text-white/60">
@@ -1267,6 +1281,7 @@ const aiScoreDistributionSummary = useMemo(() => {
                         avg total per game (recent)
                       </div>
                     </div>
+                    <PlotActions exportRef={homeAwayRef} chartId="home_away_splits" chartTitle={`${team} Home vs Away Splits`} sport={s} season={season} seasonType={seasonType} team={team} summary={aiHomeAwaySummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the ${team} home vs away split chart from the ${s.toUpperCase()} dashboard.`} />
                     <div className="mt-4 h-[280px]">
                       {scoringSeries.length === 0 ? (
                         <div className="text-sm text-white/60">
@@ -1339,13 +1354,14 @@ const aiScoreDistributionSummary = useMemo(() => {
 
 </section>
 {/* Standings */}
-                  <section className={cardClass}>
+                  <section ref={standingsRef} className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">Standings</h2>
                       <div className="text-xs text-white/60">
                         {standings?.season} {standings?.season_type}
                       </div>
                     </div>
+                    <PlotActions exportRef={standingsRef} chartId="standings" chartTitle={`${team} Standings Context`} sport={s} season={season} seasonType={seasonType} team={team} summary={aiStandingsSummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the standings context from the ${s.toUpperCase()} dashboard.`} />
                     <div className="mt-4 overflow-auto">
                       <table className="w-full text-sm">
                         <thead className="text-white/60">
@@ -1412,7 +1428,7 @@ const aiScoreDistributionSummary = useMemo(() => {
 
 
 {/* SOS */}
-                  <section className={cardClass}>
+                  <section ref={sosRef} className={cardClass}>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <h2 className="text-base font-semibold">
                         Strength of Schedule (Opponent Win%)
@@ -1427,6 +1443,7 @@ const aiScoreDistributionSummary = useMemo(() => {
                     <div className="mt-3 text-xs text-white/60">
                       True SOS using opponents’ win% for {season} {seasonType}.
                     </div>
+                    <PlotActions exportRef={sosRef} chartId="sos" chartTitle={`${team} Strength of Schedule`} sport={s} season={season} seasonType={seasonType} team={team} summary={aiSosSummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the ${team} strength-of-schedule chart from the ${s.toUpperCase()} dashboard.`} />
 
                     <div className="mt-4 h-[260px]">
                       {sosSeries.length === 0 ? (
@@ -1533,7 +1550,7 @@ const aiScoreDistributionSummary = useMemo(() => {
 
 
                   {/* Recent Form */}
-                  <section className={cardClass}>
+                  <section ref={recentFormRef} className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
                         {team} Recent Form
@@ -1542,6 +1559,7 @@ const aiScoreDistributionSummary = useMemo(() => {
                         last {form?.last ?? 0}
                       </div>
                     </div>
+                    <PlotActions exportRef={recentFormRef} chartId="recent_form" chartTitle={`${team} Recent Form`} sport={s} season={season} seasonType={seasonType} team={team} summary={aiRecentFormSummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the ${team} recent form chart from the ${s.toUpperCase()} dashboard.`} />
                     <div className="mt-4 h-[320px]">
                       {formSeries.length === 0 ? (
                         <div className="text-sm text-white/60">
@@ -1621,7 +1639,7 @@ const aiScoreDistributionSummary = useMemo(() => {
                   </section>
 
                   {/* Home vs Away Splits */}
-                  <section className={cardClass}>
+                  <section ref={homeAwayRef} className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
                         Home vs Away Splits
@@ -1702,11 +1720,12 @@ const aiScoreDistributionSummary = useMemo(() => {
 </section>
 
                   {/* Margin Histogram */}
-                  <section className={cardClass}>
+                  <section ref={marginRef} className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">Margin Histogram</h2>
                       <div className="text-xs text-white/60">{team}</div>
                     </div>
+                    <PlotActions exportRef={marginRef} chartId="margin_histogram" chartTitle={`${team} Margin Histogram`} sport={s} season={season} seasonType={seasonType} team={team} summary={aiMarginSummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the ${team} margin histogram from the ${s.toUpperCase()} dashboard.`} />
                     <div className="mt-4 h-[240px]">
                       {marginHistogram.length === 0 ? (
                         <div className="text-sm text-white/60">
@@ -1773,7 +1792,7 @@ const aiScoreDistributionSummary = useMemo(() => {
 </section>
 
                   {/* Close Games */}
-                  <section className={cardClass}>
+                  <section ref={closeGamesRef} className={cardClass}>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <h2 className="text-base font-semibold">Close Games</h2>
                       <div className="text-xs text-white/60">
@@ -1784,6 +1803,8 @@ const aiScoreDistributionSummary = useMemo(() => {
                     <div className="mt-3 text-xs text-white/60">
                       Wins/losses in games decided by ≤3, ≤7, and ≤10 points.
                     </div>
+
+                    <PlotActions exportRef={closeGamesRef} chartId="close_games" chartTitle={`${team} Close Games`} sport={s} season={season} seasonType={seasonType} team={team} summary={aiCloseGamesSummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the ${team} close-games chart from the ${s.toUpperCase()} dashboard.`} />
 
                     <div className="mt-4 h-[240px]">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1860,7 +1881,7 @@ const aiScoreDistributionSummary = useMemo(() => {
 </section>
 
                   {/* League Score Distribution */}
-                  <section className={cardClass}>
+                  <section ref={scoreDistributionRef} className={cardClass}>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <h2 className="text-base font-semibold">
                         Score Distribution (league)
@@ -1869,6 +1890,7 @@ const aiScoreDistributionSummary = useMemo(() => {
                         {season} {seasonType}
                       </div>
                     </div>
+                    <PlotActions exportRef={leagueScoringRef} chartId="league_scoring_trend" chartTitle="League Scoring Trend" sport={s} season={season} seasonType={seasonType} team={team} summary={aiLeagueScoringSummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the league scoring trend from the ${s.toUpperCase()} dashboard.`} />
                     <div className="mt-4 h-[240px]">
                       {scoringHistogram.length === 0 ? (
                         <div className="text-sm text-white/60">

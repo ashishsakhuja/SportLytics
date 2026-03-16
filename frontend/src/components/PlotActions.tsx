@@ -1,0 +1,238 @@
+"use client";
+
+import { RefObject, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { toPng } from "html-to-image";
+
+import { apiPost } from "@/lib/api";
+
+type PlotActionsProps = {
+  exportRef: RefObject<HTMLElement | null>;
+  chartId: string;
+  chartTitle: string;
+  sport: string;
+  season: number;
+  seasonType: string;
+  team?: string | null;
+  summary: Record<string, unknown> | null;
+  plotUrl: string;
+  shareBody?: string;
+  className?: string;
+};
+
+type ChartQueryResp = {
+  answer: string;
+};
+
+export default function PlotActions({
+  exportRef,
+  chartId,
+  chartTitle,
+  sport,
+  season,
+  seasonType,
+  team,
+  summary,
+  plotUrl,
+  shareBody,
+  className = "",
+}: PlotActionsProps) {
+  const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [question, setQuestion] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [answer, setAnswer] = useState<string>("");
+  const [askError, setAskError] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const disabled = !summary || Object.keys(summary).length === 0;
+
+  const defaultShareBody = useMemo(() => {
+    return (
+      shareBody ||
+      `Sharing the ${chartTitle} plot from the ${sport.toUpperCase()} dashboard. What stands out most here?`
+    );
+  }, [chartTitle, shareBody, sport]);
+
+  async function handleDownload() {
+    if (!exportRef.current) return;
+    try {
+      setDownloadStatus("Preparing PNG...");
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => resolve());
+        });
+      });
+      const dataUrl = await toPng(exportRef.current, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: "#050507",
+        skipFonts: false,
+        filter: (node) => {
+          if (!(node instanceof HTMLElement)) return true;
+          return node.dataset.exportIgnore !== "true";
+        },
+      });
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = `sportlytics-${chartId}-${sport}-${team || "chart"}.png`;
+      link.click();
+      setDownloadStatus("Downloaded PNG");
+      window.setTimeout(() => setDownloadStatus(null), 1600);
+    } catch (err) {
+      console.error("PNG export failed:", err);
+      setDownloadStatus("PNG export failed");
+      window.setTimeout(() => setDownloadStatus(null), 1800);
+    }
+  }
+
+  async function handleAskPulse() {
+    if (disabled || !question.trim()) return;
+    try {
+      setLoading(true);
+      setAskError(null);
+      setAnswer("");
+      const res = await apiPost<ChartQueryResp>("/ai/chart-query", {
+        chart_id: chartId,
+        chart_title: chartTitle,
+        sport,
+        season,
+        season_type: seasonType,
+        team: team || null,
+        summary,
+        question,
+      });
+      setAnswer(res.answer || "Not enough data yet.");
+    } catch (e: any) {
+      setAskError(e?.message ?? "Pulse could not analyze this chart right now.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleShare() {
+    const qs = new URLSearchParams({
+      share: "1",
+      plot_title: chartTitle,
+      plot_url: plotUrl,
+      prefill_body: defaultShareBody,
+    });
+    window.location.assign(`/dashboard/community?${qs.toString()}`);
+  }
+
+  const modal = open ? (
+    <div
+      data-export-ignore="true"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) setOpen(false);
+      }}
+    >
+      <div
+        className="w-full max-w-2xl rounded-[28px] border border-white/10 bg-[#09090d] p-5 shadow-[0_20px_70px_rgba(0,0,0,0.65)]"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-lg font-semibold tracking-tight">Ask Pulse about this plot</div>
+            <div className="mt-1 text-sm text-white/60">
+              {chartTitle} • {sport.toUpperCase()} {team ? `• ${team}` : ""}
+            </div>
+          </div>
+          <button
+            onClick={() => setOpen(false)}
+            className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70 transition hover:bg-white/10 hover:text-white"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3 text-xs text-white/60">
+          Pulse will answer using the exact chart summary already on this page, not a generic sports prompt.
+        </div>
+
+        <textarea
+          autoFocus
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="Example: What is the clearest trend here, and is it sustainable?"
+          className="mt-4 h-28 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400/45"
+        />
+
+        <div className="mt-3 flex items-center gap-2">
+          <button
+            onClick={handleAskPulse}
+            disabled={loading || !question.trim() || disabled}
+            className="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading ? "Analyzing..." : "Ask Pulse"}
+          </button>
+          {disabled ? <div className="text-xs text-white/50">Not enough chart data yet.</div> : null}
+        </div>
+
+        {askError ? (
+          <div className="mt-4 rounded-2xl border border-red-500/25 bg-red-500/10 p-4 text-sm text-red-100">{askError}</div>
+        ) : null}
+
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="text-xs uppercase tracking-[0.18em] text-white/45">Pulse response</div>
+          <div className="mt-2 text-sm leading-7 text-white/85">
+            {answer || "Ask a chart-specific question to get an explanation grounded in this plot’s current summary."}
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  return (
+    <>
+      <div data-export-ignore="true" className={`mt-4 flex flex-wrap items-center gap-2 ${className}`.trim()}>
+        <button
+          onClick={handleDownload}
+          className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white/85 transition hover:bg-white/10"
+        >
+          Download
+        </button>
+        <button
+          onClick={() => setOpen(true)}
+          disabled={disabled}
+          className="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Ask Pulse
+        </button>
+        <button
+          onClick={handleShare}
+          className="rounded-full border border-fuchsia-400/25 bg-fuchsia-500/10 px-4 py-2 text-xs font-semibold text-fuchsia-100 transition hover:bg-fuchsia-500/15"
+        >
+          Share to Community
+        </button>
+        {downloadStatus ? <div className="text-xs text-fuchsia-200">{downloadStatus}</div> : null}
+      </div>
+
+      {mounted && modal ? createPortal(modal, document.body) : null}
+    </>
+  );
+}

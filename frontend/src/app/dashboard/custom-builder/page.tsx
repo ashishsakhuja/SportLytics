@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { toPng } from "html-to-image";
 import {
   Area,
   AreaChart,
@@ -21,6 +20,7 @@ import {
 } from "recharts";
 
 import { apiGet } from "@/lib/api";
+import PlotActions from "@/components/PlotActions";
 
 type SportKey = "nfl" | "nba" | "mlb" | "nhl";
 
@@ -217,8 +217,6 @@ export default function CustomBuilderPage() {
   const [loadingPlot, setLoadingPlot] = useState(false);
   const [plot, setPlot] = useState<BuilderPlotResp | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
-
   const chartWrapRef = useRef<HTMLDivElement | null>(null);
   const exportCardRef = useRef<HTMLElement | null>(null);
 
@@ -426,43 +424,6 @@ export default function CustomBuilderPage() {
       if (prev.length >= limit) return prev;
       return [...prev, code];
     });
-  }
-
-  async function downloadChartPng() {
-    if (!exportCardRef.current) return;
-
-    try {
-      setDownloadStatus("Preparing PNG...");
-
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => resolve());
-        });
-      });
-
-      const dataUrl = await toPng(exportCardRef.current, {
-        cacheBust: true,
-        pixelRatio: 2,
-        backgroundColor: "#050507",
-        skipFonts: false,
-        filter: (node) => {
-          if (!(node instanceof HTMLElement)) return true;
-          return node.dataset.exportIgnore !== "true";
-        },
-      });
-
-      const link = document.createElement("a");
-      link.href = dataUrl;
-      link.download = `sportlytics-custom-chart-${sport}-${team || "chart"}.png`;
-      link.click();
-
-      setDownloadStatus("Downloaded PNG");
-      window.setTimeout(() => setDownloadStatus(null), 1600);
-    } catch (err) {
-      console.error("PNG export failed:", err);
-      setDownloadStatus("PNG export failed");
-      window.setTimeout(() => setDownloadStatus(null), 1800);
-    }
   }
 
 
@@ -1103,17 +1064,29 @@ export default function CustomBuilderPage() {
               </div>
             </div>
 
-            <div data-export-ignore="true" className="mb-4 flex flex-wrap gap-2">
-              <button
-                onClick={downloadChartPng}
-                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white/85 transition hover:bg-white/10"
-              >
-                Download PNG
-              </button>
-              {downloadStatus ? (
-                <div className="self-center text-xs text-fuchsia-200">{downloadStatus}</div>
-              ) : null}
-            </div>
+            <PlotActions
+              exportRef={exportCardRef}
+              chartId={`custom_${plot?.chart_type ?? chartType}_${plot?.metric ?? metric}`}
+              chartTitle={plot?.chart_type === "scatter"
+                ? `${plot?.metric_label ?? currentMetric?.label ?? "Metric"} vs ${plot?.secondary_metric_label ?? currentSecondaryMetric?.label ?? "Metric"}`
+                : plot?.metric_label ?? currentMetric?.label ?? "Custom Chart"}
+              sport={sport}
+              season={Number(seasonTo)}
+              seasonType={seasonType}
+              team={team}
+              summary={plot ? {
+                ...plot.summary,
+                compare_mode: plot.compare_mode,
+                granularity: plot.granularity,
+                roll_window: plot.roll_window,
+                metric_label: plot.metric_label,
+                secondary_metric_label: plot.secondary_metric_label ?? null,
+                compare_label: plot.compare_label ?? null,
+                teams: plot.teams,
+              } : null}
+              plotUrl={`/dashboard/custom-builder?sport=${sport}&team=${team}&season_from=${seasonFrom}&season_to=${seasonTo}&season_type=${seasonType}&metric=${metric}`}
+              shareBody={`Sharing a custom ${sport.toUpperCase()} plot: ${plot?.metric_label ?? currentMetric?.label ?? "Custom Chart"}. What stands out here?`}
+            />
 
             <div ref={chartWrapRef} className="rounded-2xl bg-black/15 p-2">
               {plot?.chart_type === "scatter" ? renderScatterChart() : renderStandardChart()}
