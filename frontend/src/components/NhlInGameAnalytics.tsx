@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import PlotActions from "@/components/PlotActions";
 import {
   CartesianGrid,
   Legend,
@@ -80,6 +81,12 @@ export default function NhlInGameAnalytics({
   const [data, setData] = useState<Resp | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const overviewRef = useRef<HTMLElement | null>(null);
+  const shotVolumeRef = useRef<HTMLElement | null>(null);
+  const specialTeamsRef = useRef<HTMLElement | null>(null);
+  const puckBattleRef = useRef<HTMLElement | null>(null);
+  const possessionRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -233,7 +240,7 @@ export default function NhlInGameAnalytics({
 
   return (
     <>
-      <section className={cardClass}>
+      <section ref={overviewRef} className={cardClass}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold">NHL In-Game Analytics</h2>
@@ -253,6 +260,27 @@ export default function NhlInGameAnalytics({
           ) : null}
         </div>
 
+        <div className="mt-4 text-sm font-semibold">Top-Level Trend Snapshot</div>
+        <PlotActions exportRef={overviewRef} chartId="nhl_ingame_overview" chartTitle={`${team} NHL In-Game Trend Snapshot`} sport="nhl" season={season} seasonType={seasonType} team={team} summary={overviewSummary} plotUrl={`/dashboard/nhl`} shareBody={`Sharing the ${team} NHL in-game trend snapshot.`} />
+        <div className="mt-4 h-[280px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+              <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
+              <YAxis tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+              <Tooltip
+                contentStyle={{ background: "rgba(0,0,0,0.9)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 12, color: "white", fontSize: 12 }}
+                labelFormatter={(x) => `Game #${x}`}
+                formatter={(v: any, name: any) => (v == null ? ["n/a", name] : [Number(v).toFixed(1), name])}
+              />
+              <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+              <Line type="monotone" dataKey={`shots_roll${roll}`} name={`Shots (roll${roll})`} dot={false} strokeWidth={2.5} />
+              <Line type="monotone" dataKey="faceoff_pct" name="FO%" dot={false} strokeWidth={2} opacity={0.85} />
+              <Line type="monotone" dataKey="power_play_pct" name="PP%" dot={false} strokeWidth={2} opacity={0.85} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
         {overviewSummary ? (
           <AIInsightsBox
             chartId="nhl_overview"
@@ -265,8 +293,9 @@ export default function NhlInGameAnalytics({
         ) : null}
       </section>
 
-      <section className={cardClass}>
+      <section ref={shotVolumeRef} className={cardClass}>
         <div className="text-sm font-semibold">Shot Volume & Finishing</div>
+        <PlotActions exportRef={shotVolumeRef} chartId="nhl_shot_volume_finishing" chartTitle={`${team} Shot Volume & Finishing`} sport="nhl" season={season} seasonType={seasonType} team={team} summary={shotVolumeSummary} plotUrl={`/dashboard/nhl`} shareBody={`Sharing the ${team} shot volume and finishing chart.`} />
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
             <div className="text-sm font-semibold">Shots Per Game</div>
@@ -322,8 +351,9 @@ export default function NhlInGameAnalytics({
         ) : null}
       </section>
 
-      <section className={cardClass}>
+      <section ref={specialTeamsRef} className={cardClass}>
         <div className="text-sm font-semibold">Special Teams & Discipline</div>
+        <PlotActions exportRef={specialTeamsRef} chartId="nhl_special_teams_discipline" chartTitle={`${team} Special Teams & Discipline`} sport="nhl" season={season} seasonType={seasonType} team={team} summary={specialTeamsSummary} plotUrl={`/dashboard/nhl`} shareBody={`Sharing the ${team} special teams and discipline chart.`} />
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
             <div className="text-sm font-semibold">Power Play %</div>
@@ -378,8 +408,9 @@ export default function NhlInGameAnalytics({
         ) : null}
       </section>
 
-      <section className={cardClass}>
+      <section ref={puckBattleRef} className={cardClass}>
         <div className="text-sm font-semibold">Puck Battle Metrics</div>
+        <PlotActions exportRef={puckBattleRef} chartId="nhl_puck_battles" chartTitle={`${team} Puck Battle Metrics`} sport="nhl" season={season} seasonType={seasonType} team={team} summary={puckBattleSummary} plotUrl={`/dashboard/nhl`} shareBody={`Sharing the ${team} puck battle metrics chart.`} />
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
             <div className="text-sm font-semibold">Faceoff %</div>
@@ -435,8 +466,9 @@ export default function NhlInGameAnalytics({
         ) : null}
       </section>
 
-      <section className={cardClass}>
+      <section ref={possessionRef} className={cardClass}>
         <div className="text-sm font-semibold">Possession & Turnovers</div>
+        <PlotActions exportRef={possessionRef} chartId="nhl_possession_discipline" chartTitle={`${team} Possession & Turnovers`} sport="nhl" season={season} seasonType={seasonType} team={team} summary={possessionDisciplineSummary} plotUrl={`/dashboard/nhl`} shareBody={`Sharing the ${team} possession and turnovers chart.`} />
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
             <div className="text-sm font-semibold">Giveaways vs Takeaways</div>

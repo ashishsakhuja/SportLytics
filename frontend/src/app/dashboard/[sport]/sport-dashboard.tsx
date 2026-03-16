@@ -1272,7 +1272,7 @@ const aiScoreDistributionSummary = useMemo(() => {
                   ) : null}
 
                   {/* League Scoring Trend */}
-                  <section className={cardClass}>
+                  <section ref={leagueScoringRef} className={cardClass}>
                     <div className="flex items-center justify-between">
                       <h2 className="text-base font-semibold">
                         League Scoring Trend
@@ -1281,7 +1281,7 @@ const aiScoreDistributionSummary = useMemo(() => {
                         avg total per game (recent)
                       </div>
                     </div>
-                    <PlotActions exportRef={homeAwayRef} chartId="home_away_splits" chartTitle={`${team} Home vs Away Splits`} sport={s} season={season} seasonType={seasonType} team={team} summary={aiHomeAwaySummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the ${team} home vs away split chart from the ${s.toUpperCase()} dashboard.`} />
+                    <PlotActions exportRef={scoreDistributionRef} chartId="score_distribution" chartTitle="Score Distribution (league)" sport={s} season={season} seasonType={seasonType} team={team} summary={aiScoreDistributionSummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the league score distribution from the ${s.toUpperCase()} dashboard.`} />
                     <div className="mt-4 h-[280px]">
                       {scoringSeries.length === 0 ? (
                         <div className="text-sm text-white/60">
@@ -1646,6 +1646,7 @@ const aiScoreDistributionSummary = useMemo(() => {
                       </h2>
                       <div className="text-xs text-white/60">{team}</div>
                     </div>
+                    <PlotActions exportRef={homeAwayRef} chartId="home_away_splits" chartTitle={`${team} Home vs Away Splits`} sport={s} season={season} seasonType={seasonType} team={team} summary={aiHomeAwaySummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the ${team} home vs away splits from the ${s.toUpperCase()} dashboard.`} />
                     <div className="mt-4 h-[280px]">
                       {splitBars.length === 0 ? (
                         <div className="text-sm text-white/60">No split data.</div>

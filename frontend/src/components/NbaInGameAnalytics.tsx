@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import PlotActions from "@/components/PlotActions";
 import {
   CartesianGrid,
   Legend,
@@ -98,6 +99,16 @@ export default function NbaInGameAnalytics({
   const [data, setData] = useState<Resp | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const shootingChartRef = useRef<HTMLDivElement | null>(null);
+  const efficiencyChartRef = useRef<HTMLDivElement | null>(null);
+  const ballMovementChartRef = useRef<HTMLDivElement | null>(null);
+  const paceChartRef = useRef<HTMLDivElement | null>(null);
+
+  const shootingRef = useRef<HTMLElement | null>(null);
+  const efficiencyRef = useRef<HTMLElement | null>(null);
+  const ballMovementRef = useRef<HTMLElement | null>(null);
+  const paceOffenseRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -250,7 +261,9 @@ export default function NbaInGameAnalytics({
       </div>
 
       {/* Shooting % trend */}
-      <div className="mt-4 h-[280px]">
+      <div className="mt-4 text-sm font-semibold">Shooting Trends</div>
+      <PlotActions exportRef={shootingChartRef} chartId="nba_shooting" chartTitle={`${team} Shooting Trends`} sport="nba" season={season} seasonType={seasonType} team={team} summary={shootingSummary} plotUrl={`/dashboard/nba`} shareBody={`Sharing the ${team} shooting trends chart.`} />
+      <div ref={shootingChartRef} className="mt-4 h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={rows} margin={{ top: 28, right: 10, bottom: 10, left: -10 }}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
@@ -301,7 +314,9 @@ export default function NbaInGameAnalytics({
       ) : null}
 
       {/* Efficiency trend */}
-      <div className="mt-6 h-[280px]">
+      <div className="mt-6 text-sm font-semibold">Efficiency Trends</div>
+      <PlotActions exportRef={efficiencyChartRef} chartId="nba_efficiency" chartTitle={`${team} Efficiency Trends`} sport="nba" season={season} seasonType={seasonType} team={team} summary={efficiencySummary} plotUrl={`/dashboard/nba`} shareBody={`Sharing the ${team} efficiency trends chart.`} />
+      <div ref={efficiencyChartRef} className="mt-6 h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={rows} margin={{ top: 28, right: 10, bottom: 10, left: -10 }}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
@@ -355,7 +370,9 @@ export default function NbaInGameAnalytics({
       ) : null}
 
       {/* Ball movement */}
-      <div className="mt-6 h-[280px]">
+      <div className="mt-6 text-sm font-semibold">Ball Movement</div>
+      <PlotActions exportRef={ballMovementChartRef} chartId="nba_ball_movement" chartTitle={`${team} Ball Movement`} sport="nba" season={season} seasonType={seasonType} team={team} summary={ballMovementSummary} plotUrl={`/dashboard/nba`} shareBody={`Sharing the ${team} ball movement chart.`} />
+      <div ref={ballMovementChartRef} className="mt-6 h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows.slice(-12)} margin={{ top: 28, right: 10, bottom: 10, left: -10 }}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
@@ -404,7 +421,9 @@ export default function NbaInGameAnalytics({
       ) : null}
 
       {/* Possessions vs points */}
-      <div className="mt-6 h-[280px]">
+      <div className="mt-6 text-sm font-semibold">Pace & Offense Relationship</div>
+      <PlotActions exportRef={paceChartRef} chartId="nba_pace_offense" chartTitle={`${team} Possessions vs Points`} sport="nba" season={season} seasonType={seasonType} team={team} summary={paceOffenseSummary} plotUrl={`/dashboard/nba`} shareBody={`Sharing the ${team} possessions vs points chart.`} />
+      <div ref={paceChartRef} className="mt-6 h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
           <ScatterChart margin={{ top: 18, right: 10, bottom: 10, left: 10 }}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.25} />

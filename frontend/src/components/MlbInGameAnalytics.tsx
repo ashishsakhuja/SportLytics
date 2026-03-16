@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import PlotActions from "@/components/PlotActions";
 import {
   CartesianGrid,
   Legend,
@@ -87,6 +88,12 @@ export default function MlbInGameAnalytics({
   const [data, setData] = useState<Resp | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const overviewRef = useRef<HTMLElement | null>(null);
+  const offenseRef = useRef<HTMLElement | null>(null);
+  const slashRef = useRef<HTMLElement | null>(null);
+  const disciplineRef = useRef<HTMLElement | null>(null);
+  const powerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -234,6 +241,26 @@ export default function MlbInGameAnalytics({
           </div>
         </div>
 
+        <div className="mt-4 text-sm font-semibold">Top-Level Trend Snapshot</div>
+        <PlotActions exportRef={overviewRef} chartId="mlb_ingame_overview" chartTitle={`${team} MLB In-Game Trend Snapshot`} sport="mlb" season={season} seasonType={seasonType} team={team} summary={offenseSummary} plotUrl={`/dashboard/mlb`} shareBody={`Sharing the ${team} MLB in-game trend snapshot.`} />
+        <div className="mt-4 h-[280px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+              <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
+              <YAxis tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+              <Tooltip
+                contentStyle={{ background: "rgba(0,0,0,0.9)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 12, color: "white", fontSize: 12 }}
+                labelFormatter={(x) => `Game #${x}`}
+              />
+              <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+              <Line type="monotone" dataKey={`runs_roll${roll}`} name={`Runs (roll${roll})`} dot={false} strokeWidth={2.5} />
+              <Line type="monotone" dataKey="hits" name="Hits" dot={false} strokeWidth={2} opacity={0.85} />
+              <Line type="monotone" dataKey="home_runs" name="HR" dot={false} strokeWidth={2} opacity={0.85} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
         {offenseSummary ? (
           <AIInsightsBox
             chartId="mlb_offense"
@@ -246,8 +273,9 @@ export default function MlbInGameAnalytics({
         ) : null}
       </section>
 
-      <section className={cardClass}>
+      <section ref={offenseRef} className={cardClass}>
         <div className="text-sm font-semibold">Runs & Hit Production</div>
+        <PlotActions exportRef={offenseRef} chartId="mlb_runs_hit_production" chartTitle={`${team} Runs & Hit Production`} sport="mlb" season={season} seasonType={seasonType} team={team} summary={offenseSummary} plotUrl={`/dashboard/mlb`} shareBody={`Sharing the ${team} runs and hit production chart.`} />
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
             <div className="text-sm font-semibold">Runs Per Game</div>
@@ -291,8 +319,9 @@ export default function MlbInGameAnalytics({
         </div>
       </section>
 
-      <section className={cardClass}>
+      <section ref={slashRef} className={cardClass}>
         <div className="text-sm font-semibold">Slash Line Trends</div>
+        <PlotActions exportRef={slashRef} chartId="mlb_slash_line" chartTitle={`${team} Slash Line Trends`} sport="mlb" season={season} seasonType={seasonType} team={team} summary={slashSummary} plotUrl={`/dashboard/mlb`} shareBody={`Sharing the ${team} slash line chart.`} />
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
             <div className="text-sm font-semibold">OBP / SLG / OPS</div>
@@ -350,8 +379,9 @@ export default function MlbInGameAnalytics({
         ) : null}
       </section>
 
-      <section className={cardClass}>
+      <section ref={disciplineRef} className={cardClass}>
         <div className="text-sm font-semibold">Plate Discipline</div>
+        <PlotActions exportRef={disciplineRef} chartId="mlb_plate_discipline" chartTitle={`${team} Plate Discipline`} sport="mlb" season={season} seasonType={seasonType} team={team} summary={disciplineSummary} plotUrl={`/dashboard/mlb`} shareBody={`Sharing the ${team} plate discipline chart.`} />
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
             <div className="text-sm font-semibold">Walks vs Strikeouts</div>
@@ -406,8 +436,9 @@ export default function MlbInGameAnalytics({
         ) : null}
       </section>
 
-      <section className={cardClass}>
+      <section ref={powerRef} className={cardClass}>
         <div className="text-sm font-semibold">Power & Pressure</div>
+        <PlotActions exportRef={powerRef} chartId="mlb_power_pressure" chartTitle={`${team} Power & Pressure`} sport="mlb" season={season} seasonType={seasonType} team={team} summary={runningSummary} plotUrl={`/dashboard/mlb`} shareBody={`Sharing the ${team} power and pressure chart.`} />
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
             <div className="text-sm font-semibold">Hits vs Runs</div>

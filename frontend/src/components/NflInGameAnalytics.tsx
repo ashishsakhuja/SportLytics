@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import PlotActions from "@/components/PlotActions";
 import {
   CartesianGrid,
   Legend,
@@ -87,6 +88,13 @@ export default function NflInGameAnalytics({
   const [data, setData] = useState<Resp | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const overviewRef = useRef<HTMLElement | null>(null);
+  const passingRef = useRef<HTMLElement | null>(null);
+  const qbRef = useRef<HTMLElement | null>(null);
+  const pressureRef = useRef<HTMLElement | null>(null);
+  const conversionsRef = useRef<HTMLElement | null>(null);
+  const relationshipsRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -263,7 +271,7 @@ export default function NflInGameAnalytics({
   return (
     <>
       {/* Header */}
-      <section className={cardClass}>
+      <section ref={overviewRef} className={cardClass}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold">NFL In-Game Analytics</h2>
@@ -287,6 +295,32 @@ export default function NflInGameAnalytics({
           Tip: the roll5 lines are the smooth trend read.
         </div>
 
+        <div className="mt-4 text-sm font-semibold">Top-Level Trend Snapshot</div>
+        <PlotActions exportRef={overviewRef} chartId="nfl_ingame_overview" chartTitle={`${team} NFL In-Game Trend Snapshot`} sport="nfl" season={season} seasonType={seasonType} team={team} summary={overviewSummary} plotUrl={`/dashboard/nfl`} shareBody={`Sharing the ${team} NFL in-game trend snapshot.`} />
+        <div className="mt-4 h-[280px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+              <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} />
+              <YAxis tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+              <Tooltip
+                contentStyle={{
+                  background: "rgba(0,0,0,0.9)",
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  borderRadius: 12,
+                  color: "white",
+                  fontSize: 12,
+                }}
+                labelFormatter={(x) => `Game #${x}`}
+              />
+              <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
+              <Line type="monotone" dataKey="ypa_roll5" name="YPA (roll5)" dot={false} strokeWidth={2.5} />
+              <Line type="monotone" dataKey="completion_pct" name="Completion %" dot={false} strokeWidth={2} opacity={0.8} />
+              <Line type="monotone" dataKey="third_down_pct" name="3rd Down %" dot={false} strokeWidth={2} opacity={0.8} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
         {overviewSummary ? (
           <AIInsightsBox
             chartId="nfl_ingame_overview"
@@ -300,8 +334,9 @@ export default function NflInGameAnalytics({
       </section>
 
       {/* Passing volume + rate */}
-      <section className={cardClass}>
+      <section ref={passingRef} className={cardClass}>
         <div className="text-sm font-semibold">Passing Volume & Rate</div>
+        <PlotActions exportRef={passingRef} chartId="nfl_passing_volume_rate" chartTitle={`${team} Passing Volume & Rate`} sport="nfl" season={season} seasonType={seasonType} team={team} summary={passingSummary} plotUrl={`/dashboard/nfl`} shareBody={`Sharing the ${team} passing volume and rate chart.`} />
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
             <div className="text-sm font-semibold">Pass Attempts</div>
@@ -376,8 +411,9 @@ export default function NflInGameAnalytics({
       </section>
 
       {/* QB efficiency */}
-      <section className={cardClass}>
+      <section ref={qbRef} className={cardClass}>
         <div className="text-sm font-semibold">QB Efficiency</div>
+        <PlotActions exportRef={qbRef} chartId="nfl_qb_efficiency" chartTitle={`${team} QB Efficiency`} sport="nfl" season={season} seasonType={seasonType} team={team} summary={qbEfficiencySummary} plotUrl={`/dashboard/nfl`} shareBody={`Sharing the ${team} QB efficiency chart.`} />
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
             <div className="text-sm font-semibold">Passing Efficiency (Yards / Attempt)</div>
@@ -453,8 +489,9 @@ export default function NflInGameAnalytics({
       </section>
 
       {/* Pressure + mistakes */}
-      <section className={cardClass}>
+      <section ref={pressureRef} className={cardClass}>
         <div className="text-sm font-semibold">Pressure & Mistakes</div>
+        <PlotActions exportRef={pressureRef} chartId="nfl_pressure_mistakes" chartTitle={`${team} Pressure, Mistakes & Margin`} sport="nfl" season={season} seasonType={seasonType} team={team} summary={pressureMistakesSummary} plotUrl={`/dashboard/nfl`} shareBody={`Sharing the ${team} pressure and mistakes chart.`} />
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
             <div className="text-sm font-semibold">Pressure (Sack Rate)</div>
@@ -529,8 +566,9 @@ export default function NflInGameAnalytics({
       </section>
 
       {/* Situational */}
-      <section className={cardClass}>
+      <section ref={conversionsRef} className={cardClass}>
         <div className="text-sm font-semibold">Conversion Efficiency (3rd Down & Red Zone TD%)</div>
+        <PlotActions exportRef={conversionsRef} chartId="nfl_conversions" chartTitle={`${team} Conversions & Red Zone`} sport="nfl" season={season} seasonType={seasonType} team={team} summary={conversionsSummary} plotUrl={`/dashboard/nfl`} shareBody={`Sharing the ${team} conversions and red zone chart.`} />
         <div className="mt-3 h-[280px]">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={rows} margin={{ top: 18, right: 10, bottom: 10, left: -10 }}>
@@ -575,8 +613,9 @@ export default function NflInGameAnalytics({
       </section>
 
       {/* Relationships */}
-      <section className={cardClass}>
+      <section ref={relationshipsRef} className={cardClass}>
         <div className="text-sm font-semibold">Relationships</div>
+        <PlotActions exportRef={relationshipsRef} chartId="nfl_yards_points_relationships" chartTitle={`${team} Yards / Points Relationships`} sport="nfl" season={season} seasonType={seasonType} team={team} summary={relationshipsSummary} plotUrl={`/dashboard/nfl`} shareBody={`Sharing the ${team} yards and points relationships chart.`} />
         <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="lg:col-span-6">
             <div className="text-sm font-semibold">Total Yards vs Points For</div>
