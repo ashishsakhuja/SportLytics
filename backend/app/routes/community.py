@@ -21,6 +21,9 @@ from app.models import (
 router = APIRouter(prefix="/community", tags=["community"])
 
 
+ALLOWED_SPORTS = {"nfl", "nba", "mlb", "nhl"}
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -29,9 +32,11 @@ def get_db():
         db.close()
 
 
+
 def _clean_name(value: str, fallback: str = "Guest") -> str:
     v = (value or "").strip()
     return v[:80] if v else fallback
+
 
 
 def _is_member(db: Session, group_id: int, viewer: str) -> bool:
@@ -44,9 +49,11 @@ def _is_member(db: Session, group_id: int, viewer: str) -> bool:
     ).first() is not None
 
 
+
 def _ensure_access(db: Session, group: CommunityGroup, viewer: str) -> None:
     if group.is_private and not _is_member(db, group.id, viewer):
         raise HTTPException(status_code=403, detail="This private group requires membership.")
+
 
 
 def _seed_if_empty(db: Session) -> None:
@@ -109,9 +116,7 @@ def _seed_if_empty(db: Session) -> None:
         )
         db.add(group)
         db.flush()
-
         db.add(CommunityGroupMember(group_id=group.id, member_name=item["created_by"]))
-
         thread = CommunityThread(
             group_id=group.id,
             title=item["thread"]["title"],
@@ -122,7 +127,6 @@ def _seed_if_empty(db: Session) -> None:
         )
         db.add(thread)
         db.flush()
-
         db.add(CommunityMessage(
             thread_id=thread.id,
             author=item["thread"]["author"],
@@ -132,6 +136,7 @@ def _seed_if_empty(db: Session) -> None:
             created_at=now,
         ))
     db.commit()
+
 
 
 def _group_payload(db: Session, group: CommunityGroup, viewer: str) -> dict:
@@ -144,7 +149,6 @@ def _group_payload(db: Session, group: CommunityGroup, viewer: str) -> dict:
     latest_thread = db.query(CommunityThread).filter(
         CommunityThread.group_id == group.id
     ).order_by(CommunityThread.updated_at.desc(), CommunityThread.created_at.desc()).first()
-
     return {
         "id": group.id,
         "name": group.name,
@@ -161,6 +165,7 @@ def _group_payload(db: Session, group: CommunityGroup, viewer: str) -> dict:
     }
 
 
+
 def _thread_payload(db: Session, thread: CommunityThread) -> dict:
     message_count = db.query(func.count(CommunityMessage.id)).filter(
         CommunityMessage.thread_id == thread.id
@@ -168,7 +173,6 @@ def _thread_payload(db: Session, thread: CommunityThread) -> dict:
     latest_message = db.query(CommunityMessage).filter(
         CommunityMessage.thread_id == thread.id
     ).order_by(CommunityMessage.created_at.desc()).first()
-
     return {
         "id": thread.id,
         "group_id": thread.group_id,
@@ -184,6 +188,7 @@ def _thread_payload(db: Session, thread: CommunityThread) -> dict:
     }
 
 
+
 def _message_payload(message: CommunityMessage) -> dict:
     return {
         "id": message.id,
@@ -196,13 +201,10 @@ def _message_payload(message: CommunityMessage) -> dict:
     }
 
 
-def _ensure_postgame_group(db: Session, sport: str) -> CommunityGroup:
-    sport_upper = (sport or "").upper().strip()
-    if not sport_upper:
-        sport_upper = "MIXED"
 
-    name = f"{sport_upper} Postgame Debates"
-
+def _ensure_sport_group(db: Session, *, sport: str, suffix: str, description: str) -> CommunityGroup:
+    sport_upper = (sport or "MIXED").upper().strip()
+    name = f"{sport_upper} {suffix}"
     group = db.query(CommunityGroup).filter(
         CommunityGroup.name == name,
         CommunityGroup.is_private.is_(False),
@@ -213,7 +215,7 @@ def _ensure_postgame_group(db: Session, sport: str) -> CommunityGroup:
     now = datetime.utcnow()
     group = CommunityGroup(
         name=name,
-        description=f"Auto-generated postgame reaction threads for recent {sport_upper} finals.",
+        description=description,
         sport=sport_upper,
         is_private=False,
         created_by="PulseTeam",
@@ -221,16 +223,64 @@ def _ensure_postgame_group(db: Session, sport: str) -> CommunityGroup:
     )
     db.add(group)
     db.flush()
-
-    existing_member = db.query(CommunityGroupMember.id).filter(
-        CommunityGroupMember.group_id == group.id,
-        CommunityGroupMember.member_name == "PulseTeam",
-    ).first()
-    if not existing_member:
-        db.add(CommunityGroupMember(group_id=group.id, member_name="PulseTeam"))
-
+    db.add(CommunityGroupMember(group_id=group.id, member_name="PulseTeam"))
     db.flush()
     return group
+
+
+
+def _ensure_postgame_group(db: Session, sport: str) -> CommunityGroup:
+    return _ensure_sport_group(
+        db,
+        sport=sport,
+        suffix="Postgame Debates",
+        description=f"Auto-generated postgame reaction threads for recent {sport.upper()} finals.",
+    )
+
+
+
+def _ensure_live_group(db: Session, sport: str) -> CommunityGroup:
+    return _ensure_sport_group(
+        db,
+        sport=sport,
+        suffix="Live Game Threads",
+        description=f"Auto-generated live and near-tipoff threads for active {sport.upper()} games.",
+    )
+
+
+
+def _normalize_status(status: str | None) -> str:
+    s = (status or "").strip().lower()
+    if not s:
+        return "scheduled"
+    if s in {"pre", "preview", "scheduled"}:
+        return "scheduled"
+    if s in {"live", "in_progress", "in progress", "halftime"}:
+        return "live"
+    if s == "final":
+        return "final"
+    return s
+
+
+
+def _scoreline(game: Game) -> str:
+    away = (game.away_team_code or "AWAY").upper()
+    home = (game.home_team_code or "HOME").upper()
+    away_score = game.away_score if game.away_score is not None else "—"
+    home_score = game.home_score if game.home_score is not None else "—"
+    return f"{away} {away_score} at {home} {home_score}"
+
+
+
+def _dashboard_href_for_game(game: Game) -> str:
+    sport = (game.sport or "").lower().strip()
+    away = (game.away_team_code or "").upper().strip()
+    home = (game.home_team_code or "").upper().strip()
+    if sport in ALLOWED_SPORTS and home:
+        return f"/dashboard/{sport}?team={home}"
+    if sport in ALLOWED_SPORTS:
+        return f"/dashboard/{sport}"
+    return "/dashboard"
 
 
 class GroupCreate(BaseModel):
@@ -268,7 +318,7 @@ class AutoPostgameSyncRequest(BaseModel):
     limit: int = Field(default=60, ge=1, le=200)
 
 
-@router.get("/groups")
+@router.get('/groups')
 def list_groups(viewer: str = "", db: Session = Depends(get_db)):
     _seed_if_empty(db)
     groups = db.query(CommunityGroup).order_by(
@@ -279,7 +329,7 @@ def list_groups(viewer: str = "", db: Session = Depends(get_db)):
     return {"items": [_group_payload(db, g, viewer) for g in visible]}
 
 
-@router.post("/groups")
+@router.post('/groups')
 def create_group(payload: GroupCreate, db: Session = Depends(get_db)):
     creator = _clean_name(payload.created_by)
     group = CommunityGroup(
@@ -297,12 +347,11 @@ def create_group(payload: GroupCreate, db: Session = Depends(get_db)):
     return {"ok": True, "group": _group_payload(db, group, creator)}
 
 
-@router.post("/groups/{group_id}/join")
+@router.post('/groups/{group_id}/join')
 def join_group(group_id: int, payload: JoinGroupRequest, db: Session = Depends(get_db)):
     group = db.get(CommunityGroup, group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-
     viewer = _clean_name(payload.viewer)
     exists = db.query(CommunityGroupMember.id).filter(
         CommunityGroupMember.group_id == group_id,
@@ -311,39 +360,33 @@ def join_group(group_id: int, payload: JoinGroupRequest, db: Session = Depends(g
     if not exists:
         db.add(CommunityGroupMember(group_id=group_id, member_name=viewer))
         db.commit()
-
     return {"ok": True, "group": _group_payload(db, group, viewer)}
 
 
-@router.get("/groups/{group_id}/threads")
+@router.get('/groups/{group_id}/threads')
 def list_threads(group_id: int, viewer: str = "", db: Session = Depends(get_db)):
     group = db.get(CommunityGroup, group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-
     _ensure_access(db, group, viewer)
-
     threads = db.query(CommunityThread).filter(
         CommunityThread.group_id == group_id
     ).order_by(CommunityThread.updated_at.desc(), CommunityThread.created_at.desc()).all()
-
     return {
         "group": _group_payload(db, group, viewer),
         "items": [_thread_payload(db, t) for t in threads],
     }
 
 
-@router.post("/groups/{group_id}/threads")
+@router.post('/groups/{group_id}/threads')
 def create_thread(group_id: int, payload: ThreadCreate, db: Session = Depends(get_db)):
     group = db.get(CommunityGroup, group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-
     author = _clean_name(payload.author)
     if group.is_private and not _is_member(db, group.id, author):
         db.add(CommunityGroupMember(group_id=group.id, member_name=author))
         db.flush()
-
     now = datetime.utcnow()
     thread = CommunityThread(
         group_id=group.id,
@@ -355,7 +398,6 @@ def create_thread(group_id: int, payload: ThreadCreate, db: Session = Depends(ge
     )
     db.add(thread)
     db.flush()
-
     db.add(CommunityMessage(
         thread_id=thread.id,
         author=author,
@@ -364,28 +406,23 @@ def create_thread(group_id: int, payload: ThreadCreate, db: Session = Depends(ge
         shared_plot_url=(payload.shared_plot_url or "").strip() or None,
         created_at=now,
     ))
-
     db.commit()
     db.refresh(thread)
     return {"ok": True, "thread": _thread_payload(db, thread)}
 
 
-@router.get("/threads/{thread_id}")
+@router.get('/threads/{thread_id}')
 def get_thread(thread_id: int, viewer: str = "", db: Session = Depends(get_db)):
     thread = db.get(CommunityThread, thread_id)
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
-
     group = db.get(CommunityGroup, thread.group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-
     _ensure_access(db, group, viewer)
-
     messages = db.query(CommunityMessage).filter(
         CommunityMessage.thread_id == thread_id
     ).order_by(CommunityMessage.created_at.asc()).all()
-
     return {
         "group": _group_payload(db, group, viewer),
         "thread": _thread_payload(db, thread),
@@ -393,20 +430,17 @@ def get_thread(thread_id: int, viewer: str = "", db: Session = Depends(get_db)):
     }
 
 
-@router.post("/threads/{thread_id}/messages")
+@router.post('/threads/{thread_id}/messages')
 def create_message(thread_id: int, payload: MessageCreate, db: Session = Depends(get_db)):
     thread = db.get(CommunityThread, thread_id)
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
-
     group = db.get(CommunityGroup, thread.group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-
     author = _clean_name(payload.author)
     if group.is_private and not _is_member(db, group.id, author):
         raise HTTPException(status_code=403, detail="Join the private group before posting.")
-
     now = datetime.utcnow()
     message = CommunityMessage(
         thread_id=thread.id,
@@ -421,17 +455,15 @@ def create_message(thread_id: int, payload: MessageCreate, db: Session = Depends
     db.add(thread)
     db.commit()
     db.refresh(message)
-
     return {"ok": True, "message": _message_payload(message)}
 
 
-@router.post("/auto/postgames/sync")
+@router.post('/auto/postgames/sync')
 def sync_postgame_threads(payload: AutoPostgameSyncRequest, db: Session = Depends(get_db)):
     _seed_if_empty(db)
 
     sport_filter = (payload.sport or "").lower().strip()
-    allowed_sports = {"nfl", "nba", "mlb", "nhl"}
-    if sport_filter and sport_filter not in allowed_sports:
+    if sport_filter and sport_filter not in ALLOWED_SPORTS:
         raise HTTPException(status_code=400, detail="Unsupported sport filter")
 
     cutoff = datetime.utcnow() - timedelta(days=payload.lookback_days)
@@ -447,7 +479,7 @@ def sync_postgame_threads(payload: AutoPostgameSyncRequest, db: Session = Depend
         q = q.filter(sa.func.lower(Game.sport) == sport_filter)
         sports_used = [sport_filter]
     else:
-        q = q.filter(sa.func.lower(Game.sport).in_(list(allowed_sports)))
+        q = q.filter(sa.func.lower(Game.sport).in_(list(ALLOWED_SPORTS)))
         sports_used = ["nfl", "nba", "mlb", "nhl"]
 
     games = q.order_by(Game.game_date.desc()).limit(payload.limit).all()
@@ -458,7 +490,7 @@ def sync_postgame_threads(payload: AutoPostgameSyncRequest, db: Session = Depend
 
     for game in games:
         sport = (game.sport or "").lower().strip()
-        if sport not in allowed_sports:
+        if sport not in ALLOWED_SPORTS:
             skipped_count += 1
             continue
 
@@ -518,3 +550,95 @@ def sync_postgame_threads(payload: AutoPostgameSyncRequest, db: Session = Depend
         "lookback_days": payload.lookback_days,
         "sports": sports_used,
     }
+
+
+@router.get('/live/sidebar')
+def live_sidebar_threads(viewer: str = "Guest", limit: int = 8, db: Session = Depends(get_db)):
+    _seed_if_empty(db)
+    now = datetime.utcnow()
+    start_cutoff = now - timedelta(hours=6)
+    end_cutoff = now + timedelta(hours=18)
+
+    games = db.query(Game).filter(
+        Game.game_date.isnot(None),
+        sa.func.lower(Game.sport).in_(list(ALLOWED_SPORTS)),
+        Game.game_date >= start_cutoff,
+        Game.game_date <= end_cutoff,
+        sa.or_(
+            sa.func.lower(Game.status).in_(["pre", "preview", "scheduled", "live", "in_progress", "in progress", "halftime"]),
+            sa.func.lower(Game.phase).in_(["q1", "q2", "q3", "q4", "ot", "live"]),
+        ),
+    ).order_by(Game.game_date.asc()).limit(max(1, min(limit, 12))).all()
+
+    items = []
+    clean_viewer = _clean_name(viewer)
+
+    for game in games:
+        sport = (game.sport or "").lower().strip()
+        if sport not in ALLOWED_SPORTS:
+            continue
+
+        status = _normalize_status(game.status)
+        auto_key = f"live:{sport}:{game.provider}:{game.external_game_id}"
+        thread = db.query(CommunityThread).filter(
+            CommunityThread.auto_source_key == auto_key
+        ).first()
+
+        if not thread:
+            group = _ensure_live_group(db, sport)
+            title_status = "Live Reactions" if status == "live" else "Game Thread"
+            title = f"{_scoreline(game)} — {title_status}"
+            opener = (
+                f"{(game.away_team_code or 'AWAY').upper()} vs {(game.home_team_code or 'HOME').upper()} "
+                f"discussion hub for this {sport.upper()} matchup. Use this thread for live swings, "
+                f"momentum notes, coaching decisions, and dashboard-driven reactions."
+            )
+            thread = CommunityThread(
+                group_id=group.id,
+                title=title,
+                created_by=clean_viewer or "PulseTeam",
+                is_private=False,
+                auto_source_kind="live_game",
+                auto_source_key=auto_key,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(thread)
+            db.flush()
+            db.add(CommunityMessage(
+                thread_id=thread.id,
+                author="PulseTeam",
+                body=opener,
+                shared_plot_title=f"{sport.upper()} Dashboard",
+                shared_plot_url=_dashboard_href_for_game(game),
+                created_at=now,
+            ))
+            db.flush()
+
+        latest_message = db.query(CommunityMessage).filter(
+            CommunityMessage.thread_id == thread.id
+        ).order_by(CommunityMessage.created_at.desc()).first()
+        message_count = db.query(func.count(CommunityMessage.id)).filter(
+            CommunityMessage.thread_id == thread.id
+        ).scalar() or 0
+
+        items.append({
+            "thread_id": thread.id,
+            "group_id": thread.group_id,
+            "sport": sport,
+            "status": status,
+            "phase": game.phase,
+            "game_date": game.game_date.isoformat() if game.game_date else None,
+            "away_team": (game.away_team_code or "AWAY").upper(),
+            "home_team": (game.home_team_code or "HOME").upper(),
+            "away_score": game.away_score,
+            "home_score": game.home_score,
+            "title": thread.title,
+            "message_count": int(message_count),
+            "latest_message_preview": latest_message.body[:120] if latest_message else None,
+            "dashboard_url": _dashboard_href_for_game(game),
+        })
+
+    db.commit()
+    items.sort(key=lambda x: (0 if x["status"] == "live" else 1, x["game_date"] or ""))
+    return {"items": items[: max(1, min(limit, 12))]}
