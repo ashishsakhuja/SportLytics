@@ -4,6 +4,16 @@ if (!API_BASE) {
   throw new Error("Missing NEXT_PUBLIC_API_BASE in .env.local");
 }
 
+function buildHeaders(contentType = true): HeadersInit {
+  const headers: Record<string, string> = {};
+  if (contentType) headers["Content-Type"] = "application/json";
+  if (typeof window !== "undefined") {
+    const token = window.localStorage.getItem("sportlytics.auth.token");
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 async function parseResponse<T>(res: Response, method: string, path: string): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -13,14 +23,14 @@ async function parseResponse<T>(res: Response, method: string, path: string): Pr
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+  const res = await fetch(`${API_BASE}${path}`, { cache: "no-store", headers: buildHeaders(false) });
   return parseResponse<T>(res, "GET", path);
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildHeaders(true),
     body: JSON.stringify(body),
   });
   return parseResponse<T>(res, "POST", path);

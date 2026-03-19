@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.auth import get_current_user_optional, get_current_user_required
 from app.db import SessionLocal
 from app.models import (
     CommunityGroup,
@@ -16,6 +17,7 @@ from app.models import (
     CommunityMessage,
     CommunityThread,
     Game,
+    UserAccount,
 )
 
 router = APIRouter(prefix="/community", tags=["community"])
@@ -50,6 +52,12 @@ def _is_member(db: Session, group_id: int, viewer: str) -> bool:
 
 
 
+
+
+def _actor_name(user: UserAccount | None, fallback: str = "Guest") -> str:
+    if user and getattr(user, "display_name", None):
+        return _clean_name(user.display_name, fallback)
+    return fallback
 def _ensure_access(db: Session, group: CommunityGroup, viewer: str) -> None:
     if group.is_private and not _is_member(db, group.id, viewer):
         raise HTTPException(status_code=403, detail="This private group requires membership.")
@@ -332,7 +340,6 @@ class GroupCreate(BaseModel):
     description: Optional[str] = Field(default=None, max_length=500)
     sport: Optional[str] = Field(default="Mixed", max_length=30)
     is_private: bool = False
-    created_by: str = Field(default="Guest", max_length=80)
 
 
 class JoinGroupRequest(BaseModel):
@@ -342,7 +349,6 @@ class JoinGroupRequest(BaseModel):
 class ThreadCreate(BaseModel):
     title: str = Field(..., min_length=2, max_length=220)
     body: str = Field(..., min_length=1, max_length=4000)
-    author: str = Field(default="Guest", max_length=80)
     is_private: bool = False
     shared_plot_title: Optional[str] = Field(default=None, max_length=200)
     shared_plot_url: Optional[str] = Field(default=None, max_length=600)
@@ -350,7 +356,6 @@ class ThreadCreate(BaseModel):
 
 
 class MessageCreate(BaseModel):
-    author: str = Field(default="Guest", max_length=80)
     body: str = Field(..., min_length=1, max_length=4000)
     shared_plot_title: Optional[str] = Field(default=None, max_length=200)
     shared_plot_url: Optional[str] = Field(default=None, max_length=600)
@@ -365,8 +370,9 @@ class AutoPostgameSyncRequest(BaseModel):
 
 
 @router.get('/groups')
-def list_groups(viewer: str = "", db: Session = Depends(get_db)):
+def list_groups(viewer: str = "", db: Session = Depends(get_db), user: UserAccount | None = Depends(get_current_user_optional)):
     _seed_if_empty(db)
+    viewer = _actor_name(user, _clean_name(viewer, ""))
     groups = db.query(CommunityGroup).order_by(
         CommunityGroup.is_private.asc(),
         CommunityGroup.created_at.desc(),
@@ -376,8 +382,8 @@ def list_groups(viewer: str = "", db: Session = Depends(get_db)):
 
 
 @router.post('/groups')
-def create_group(payload: GroupCreate, db: Session = Depends(get_db)):
-    creator = _clean_name(payload.created_by)
+def create_group(payload: GroupCreate, db: Session = Depends(get_db), user: UserAccount = Depends(get_current_user_required)):
+    creator = _actor_name(user)
     group = CommunityGroup(
         name=payload.name.strip(),
         description=(payload.description or "").strip() or None,
@@ -395,6 +401,7 @@ def create_group(payload: GroupCreate, db: Session = Depends(get_db)):
 
 @router.post('/groups/{group_id}/join')
 def join_group(group_id: int, payload: JoinGroupRequest, db: Session = Depends(get_db)):
+    viewer = _actor_name(user, _clean_name(viewer, ""))
     group = db.get(CommunityGroup, group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
@@ -410,7 +417,7 @@ def join_group(group_id: int, payload: JoinGroupRequest, db: Session = Depends(g
 
 
 @router.get('/groups/{group_id}/threads')
-def list_threads(group_id: int, viewer: str = "", db: Session = Depends(get_db)):
+def list_threads(group_id: int, viewer: str = "", db: Session = Depends(get_db), user: UserAccount | None = Depends(get_current_user_optional)):
     group = db.get(CommunityGroup, group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
@@ -425,11 +432,11 @@ def list_threads(group_id: int, viewer: str = "", db: Session = Depends(get_db))
 
 
 @router.post('/groups/{group_id}/threads')
-def create_thread(group_id: int, payload: ThreadCreate, db: Session = Depends(get_db)):
+def create_thread(group_id: int, payload: ThreadCreate, db: Session = Depends(get_db), user: UserAccount = Depends(get_current_user_required)):
     group = db.get(CommunityGroup, group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-    author = _clean_name(payload.author)
+    author = _actor_name(user)
     if group.is_private and not _is_member(db, group.id, author):
         db.add(CommunityGroupMember(group_id=group.id, member_name=author))
         db.flush()
@@ -459,7 +466,8 @@ def create_thread(group_id: int, payload: ThreadCreate, db: Session = Depends(ge
 
 
 @router.get('/threads/{thread_id}')
-def get_thread(thread_id: int, viewer: str = "", db: Session = Depends(get_db)):
+def get_thread(thread_id: int, viewer: str = "", db: Session = Depends(get_db), user: UserAccount | None = Depends(get_current_user_optional)):
+    viewer = _actor_name(user, _clean_name(viewer, ""))
     thread = db.get(CommunityThread, thread_id)
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
@@ -478,14 +486,14 @@ def get_thread(thread_id: int, viewer: str = "", db: Session = Depends(get_db)):
 
 
 @router.post('/threads/{thread_id}/messages')
-def create_message(thread_id: int, payload: MessageCreate, db: Session = Depends(get_db)):
+def create_message(thread_id: int, payload: MessageCreate, db: Session = Depends(get_db), user: UserAccount = Depends(get_current_user_required)):
     thread = db.get(CommunityThread, thread_id)
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
     group = db.get(CommunityGroup, thread.group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-    author = _clean_name(payload.author)
+    author = _actor_name(user)
     if group.is_private and not _is_member(db, group.id, author):
         raise HTTPException(status_code=403, detail="Join the private group before posting.")
     now = datetime.utcnow()

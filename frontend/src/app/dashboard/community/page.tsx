@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { apiGet, apiPost } from "@/lib/api";
+import { getStoredUser, clearAuthSession, type AuthUser } from "@/lib/auth";
 
 type Group = {
   id: number;
@@ -151,7 +153,9 @@ function PlotAttachmentCard({
 }
 
 export default function CommunityPage() {
+  const router = useRouter();
   const [viewer, setViewer] = useState("Ash");
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [viewerReady, setViewerReady] = useState(false);
   const [groups, setGroups] = useState<Group[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -184,6 +188,10 @@ export default function CommunityPage() {
 
   const [autoSport, setAutoSport] = useState<(typeof AUTO_SPORT_OPTIONS)[number]>("all");
   const [lookbackDays, setLookbackDays] = useState(7);
+
+  function promptSignIn() {
+    router.push(`/auth/sign-in?returnTo=${encodeURIComponent("/dashboard/community")}`);
+  }
 
   useEffect(() => {
     const stored = window.localStorage.getItem("sportlytics.community.viewer");
@@ -232,6 +240,27 @@ export default function CommunityPage() {
     const clean = viewer.trim() || "Ash";
     window.localStorage.setItem("sportlytics.community.viewer", clean);
   }, [viewer, viewerReady]);
+
+  useEffect(() => {
+    if (!viewerReady) return;
+
+    const storedUser = getStoredUser();
+    if (storedUser?.display_name) {
+      setAuthUser(storedUser);
+      setViewer(storedUser.display_name);
+    }
+
+    apiGet<{ authenticated: boolean; user: AuthUser | null }>("/auth/me")
+      .then((res) => {
+        if (res.authenticated && res.user) {
+          setAuthUser(res.user);
+          setViewer(res.user.display_name);
+        } else {
+          setAuthUser(null);
+        }
+      })
+      .catch(() => {});
+  }, [viewerReady]);
 
   useEffect(() => {
     if (!previewPlot) return;
@@ -317,6 +346,7 @@ export default function CommunityPage() {
   }, [groups]);
 
   async function createGroup() {
+    if (!authUser) { promptSignIn(); return; }
     if (!groupName.trim()) return;
     setBusy(true);
     setError(null);
@@ -327,7 +357,6 @@ export default function CommunityPage() {
         description: groupDescription,
         sport: groupSport,
         is_private: groupPrivate,
-        created_by: viewer.trim() || "Ash",
       });
       setGroupName("");
       setGroupDescription("");
@@ -356,6 +385,7 @@ export default function CommunityPage() {
   }
 
   async function createThread() {
+    if (!authUser) { promptSignIn(); return; }
     if (!selectedGroupId || !threadTitle.trim() || !threadBody.trim()) return;
     setBusy(true);
     setError(null);
@@ -364,7 +394,6 @@ export default function CommunityPage() {
       const res = await apiPost<{ ok: boolean; thread: Thread }>(`/community/groups/${selectedGroupId}/threads`, {
         title: threadTitle,
         body: threadBody,
-        author: viewer.trim() || "Ash",
         shared_plot_title: threadPlotTitle,
         shared_plot_url: threadPlotUrl,
         shared_plot_payload: threadPlotPayload,
@@ -384,13 +413,13 @@ export default function CommunityPage() {
   }
 
   async function sendMessage() {
+    if (!authUser) { promptSignIn(); return; }
     if (!selectedThreadId || !messageBody.trim()) return;
     setBusy(true);
     setError(null);
     setSyncNote(null);
     try {
       await apiPost(`/community/threads/${selectedThreadId}/messages`, {
-        author: viewer.trim() || "Ash",
         body: messageBody,
         shared_plot_title: messagePlotTitle,
         shared_plot_url: messagePlotUrl,
@@ -471,6 +500,32 @@ export default function CommunityPage() {
                 placeholder="Display name"
               />
             </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-white/55">Account</div>
+              {authUser ? (
+                <div className="mt-1">
+                  <div className="text-sm font-semibold text-white">{authUser.display_name}</div>
+                  <div className="text-[11px] text-white/55">{authUser.email}</div>
+                </div>
+              ) : (
+                <div className="mt-1 text-sm text-white/70">Guest mode · sign in when you want to post</div>
+              )}
+            </div>
+            {authUser ? (
+              <button
+                onClick={() => { clearAuthSession(); setAuthUser(null); }}
+                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium transition hover:bg-white/15"
+              >
+                Sign out
+              </button>
+            ) : (
+              <button
+                onClick={promptSignIn}
+                className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-sm font-medium text-cyan-100 transition hover:bg-cyan-500/15"
+              >
+                Sign in
+              </button>
+            )}
             <button
               onClick={() => loadGroups(selectedGroupId, selectedThreadId)}
               className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium transition hover:bg-white/15"
@@ -636,6 +691,7 @@ export default function CommunityPage() {
 
             <div className="mt-6 border-t border-white/10 pt-5">
               <h3 className="text-sm font-semibold">Create group</h3>
+              {!authUser ? <div className="mt-2 text-xs text-white/55">Creating groups also requires sign-in.</div> : null}
               <div className="mt-3 space-y-3">
                 <input value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group name" className={inputClassName()} />
                 <input value={groupDescription} onChange={(e) => setGroupDescription(e.target.value)} placeholder="Description" className={inputClassName()} />
@@ -649,7 +705,7 @@ export default function CommunityPage() {
                   disabled={busy}
                   className="w-full rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-500/15 disabled:opacity-60"
                 >
-                  Create Group
+                  {authUser ? "Create Group" : "Sign in to create"}
                 </button>
               </div>
             </div>
@@ -721,6 +777,7 @@ export default function CommunityPage() {
 
                 <div className="mt-6 border-t border-white/10 pt-5">
                   <h3 className="text-sm font-semibold">Start a thread</h3>
+                  {!authUser ? <div className="mt-2 text-xs text-white/55">Browsing is open. Sign in only when you want to post.</div> : null}
                   <div className="mt-3 space-y-3">
                     <input value={threadTitle} onChange={(e) => setThreadTitle(e.target.value)} placeholder="Thread title" className={inputClassName()} />
                     <textarea value={threadBody} onChange={(e) => setThreadBody(e.target.value)} placeholder="Open the discussion…" rows={4} className={inputClassName()} />
@@ -738,7 +795,7 @@ export default function CommunityPage() {
                       disabled={busy || !selectedGroup}
                       className="w-full rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-4 py-2 text-sm font-medium text-fuchsia-100 transition hover:bg-fuchsia-500/15 disabled:opacity-60"
                     >
-                      Create Thread
+                      {authUser ? "Create Thread" : "Sign in to post"}
                     </button>
                   </div>
                 </div>
@@ -761,7 +818,8 @@ export default function CommunityPage() {
 
             <div className="mt-4 space-y-3">
               {messages.map((msg, index) => {
-                const isViewer = msg.author.trim().toLowerCase() === (viewer.trim() || "Ash").toLowerCase();
+                const currentIdentity = authUser?.display_name || viewer;
+                const isViewer = msg.author.trim().toLowerCase() === (currentIdentity.trim() || "Ash").toLowerCase();
                 const plotTitle = msg.shared_plot_title || msg.shared_plot_payload?.chart_title || null;
                 return (
                   <div
@@ -808,6 +866,7 @@ export default function CommunityPage() {
 
             <div className="mt-6 border-t border-white/10 pt-5">
               <h3 className="text-sm font-semibold">Reply</h3>
+              {!authUser ? <div className="mt-2 text-xs text-white/55">Public rooms stay readable without an account. Posting requires sign-in.</div> : null}
               <div className="mt-3 space-y-3">
                 <textarea value={messageBody} onChange={(e) => setMessageBody(e.target.value)} placeholder="Drop your take, question, or plot breakdown…" rows={4} className={inputClassName()} />
                 <input value={messagePlotTitle} onChange={(e) => setMessagePlotTitle(e.target.value)} placeholder="Optional shared plot title" className={inputClassName()} />
@@ -824,7 +883,7 @@ export default function CommunityPage() {
                   disabled={busy || !selectedThread}
                   className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-100 transition hover:bg-emerald-500/15 disabled:opacity-60"
                 >
-                  Send Message
+                  {authUser ? "Send Message" : "Sign in to send"}
                 </button>
               </div>
             </div>
