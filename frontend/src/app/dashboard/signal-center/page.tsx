@@ -430,13 +430,26 @@ export default function SignalCenterPage() {
                 <div className="mt-5 flex flex-col gap-3 sm:flex-row">
                   <textarea
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="Ask Pulse about recent trends, offensive improvement, defense, comparisons, or location splits…"
+                    onChange={(e) => {
+                      if (!authUser) {
+                        promptSignIn();
+                        return;
+                      }
+                      setInput(e.target.value);
+                    }}
+                    onFocus={() => {
+                      if (!authUser) promptSignIn();
+                    }}
+                    onClick={() => {
+                      if (!authUser) promptSignIn();
+                    }}
+                    readOnly={!authUser}
+                    placeholder={authUser ? "Ask Pulse about recent trends, offensive improvement, defense, comparisons, or location splits…" : "Sign in to start asking Pulse questions…"}
                     className="min-h-[96px] flex-1 rounded-2xl border border-white/10 bg-black/35 px-4 py-3 text-sm text-white outline-none focus:border-fuchsia-400/60"
                   />
                   <button
                     onClick={() => submitQuestion(input)}
-                    disabled={chatLoading || !input.trim()}
+                    disabled={chatLoading || (authUser ? !input.trim() : false)}
                     className="rounded-2xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-5 py-3 text-sm font-semibold text-fuchsia-100 transition hover:bg-fuchsia-500/15 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {authUser ? "Send to Pulse" : "Sign in to ask"}

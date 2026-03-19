@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import Sparkline from "@/components/Sparkline";
+import { clearAuthSession, getStoredUser, type AuthUser } from "@/lib/auth";
 
 type NewsItem = {
   id: number;
@@ -77,7 +78,6 @@ const SPORT_LABEL: Record<string, string> = {
   nascar: "NASCAR",
 };
 
-// IMPORTANT: only these have sport-specific dashboard pages right now
 const SUPPORTED_SPORT_PAGES = new Set(["nfl", "nba", "mlb", "nhl"]);
 
 const STOPWORDS = new Set([
@@ -192,6 +192,9 @@ export default function GeneralDashboard() {
   const [err, setErr] = useState<string | null>(null);
   const [liveThreads, setLiveThreads] = useState<LiveSidebarItem[]>([]);
 
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+
   async function load() {
     setLoading(true);
     setErr(null);
@@ -217,6 +220,30 @@ export default function GeneralDashboard() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    setAuthUser(getStoredUser());
+
+    const onStorage = () => {
+      setAuthUser(getStoredUser());
+    };
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  async function handleSignOut() {
+    setAuthBusy(true);
+    try {
+      await apiPost("/auth/logout", {});
+    } catch {
+      // clear local session even if backend logout fails
+    } finally {
+      clearAuthSession();
+      setAuthUser(null);
+      setAuthBusy(false);
+    }
+  }
 
   const filteredNews = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -306,7 +333,11 @@ export default function GeneralDashboard() {
     });
   }, [metaSports]);
 
-  const lastRun = health?.ingestion?.last_run ?? null;
+  const topCoverageSport = useMemo(() => {
+    const supported = sportsCoverage.filter((s) => SUPPORTED_SPORT_PAGES.has(s.key));
+    if (supported.length === 0) return null;
+    return [...supported].sort((a, b) => b.count - a.count)[0];
+  }, [sportsCoverage]);
 
   if (loading) {
     return (
@@ -341,7 +372,6 @@ export default function GeneralDashboard() {
 
   return (
     <main className="min-h-screen bg-black text-white">
-      {/* Top bar */}
       <header className="sticky top-0 z-20 border-b border-white/10 bg-black/70 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
@@ -353,30 +383,54 @@ export default function GeneralDashboard() {
                 General Dashboard
               </div>
               <div className="text-xs text-white/60">
-                All-sports news + analysis signals (DB-backed)
+                All-sports news + analysis signals
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="hidden sm:block text-xs text-white/60">
-              DB:{" "}
-              <span
-                className={health?.db?.ok ? "text-emerald-300" : "text-red-300"}
-              >
-                {health?.db?.ok ? "ok" : "degraded"}
-              </span>
-              {health?.content_items?.latest_published_at ? (
-                <>
-                  {" "}
-                  • latest item{" "}
-                  <span className="text-white/80">
-                    {agoLabel(
-                      new Date(health.content_items.latest_published_at)
-                    )}
-                  </span>
-                </>
-              ) : null}
+            <div className="hidden md:flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
+                  Identity
+                </div>
+                {authUser ? (
+                  <div className="mt-1 text-sm text-white/90">
+                    <span className="font-semibold">{authUser.display_name}</span>
+                    <span className="text-white/45"> • {authUser.email}</span>
+                  </div>
+                ) : (
+                  <div className="mt-1 text-sm text-white/70">
+                    Browse freely. Sign in for Pulse and Community posting.
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {authUser ? (
+                  <button
+                    onClick={handleSignOut}
+                    disabled={authBusy}
+                    className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {authBusy ? "Signing out..." : "Sign out"}
+                  </button>
+                ) : (
+                  <>
+                    <Link
+                      href="/auth/sign-in?returnTo=%2Fdashboard"
+                      className="rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-3 py-2 text-sm text-fuchsia-100 hover:bg-fuchsia-500/15"
+                    >
+                      Sign in
+                    </Link>
+                    <Link
+                      href="/auth/sign-up?returnTo=%2Fdashboard"
+                      className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm hover:bg-white/15"
+                    >
+                      Create account
+                    </Link>
+                  </>
+                )}
+              </div>
             </div>
 
             <button
@@ -390,15 +444,53 @@ export default function GeneralDashboard() {
       </header>
 
       <div className="mx-auto max-w-6xl px-6 py-8">
-        {/* Controls */}
+        <div className="mb-4 md:hidden rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
+            Identity
+          </div>
+          {authUser ? (
+            <>
+              <div className="mt-2 text-sm text-white/90">
+                <span className="font-semibold">{authUser.display_name}</span>
+              </div>
+              <div className="text-xs text-white/55">{authUser.email}</div>
+              <button
+                onClick={handleSignOut}
+                disabled={authBusy}
+                className="mt-3 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {authBusy ? "Signing out..." : "Sign out"}
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="mt-2 text-sm text-white/70">
+                Browse freely. Sign in for Pulse and Community posting.
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link
+                  href="/auth/sign-in?returnTo=%2Fdashboard"
+                  className="rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-3 py-2 text-sm text-fuchsia-100 hover:bg-fuchsia-500/15"
+                >
+                  Sign in
+                </Link>
+                <Link
+                  href="/auth/sign-up?returnTo=%2Fdashboard"
+                  className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm hover:bg-white/15"
+                >
+                  Create account
+                </Link>
+              </div>
+            </>
+          )}
+        </div>
+
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
-            {/* "All" stays on general dashboard */}
             <span className="rounded-full px-4 py-2 text-xs font-semibold border border-white/35 bg-white/20">
               All
             </span>
 
-            {/* Sport chips navigate ONLY for supported sport pages */}
             {sportsCoverage
               .map((s) => s.key)
               .filter((v, i, a) => a.indexOf(v) === i)
@@ -445,7 +537,6 @@ export default function GeneralDashboard() {
           </div>
         </div>
 
-        {/* KPI Strip */}
         <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard
             label="Items loaded"
@@ -465,26 +556,22 @@ export default function GeneralDashboard() {
             sub={kpis.latest ? kpis.latest.toISOString() : ""}
           />
           <KpiCard
-            label="Ingest status"
-            value={lastRun ? lastRun.status : "—"}
-            sub={
-              lastRun?.started_at
-                ? `Run #${lastRun.id} • inserted ${lastRun.inserted_count}`
-                : "No ingest runs found"
-            }
+            label="Top sport volume"
+            value={topCoverageSport ? (topCoverageSport.label ?? SPORT_LABEL[topCoverageSport.key] ?? topCoverageSport.key.toUpperCase()) : "—"}
+            sub={topCoverageSport ? `${topCoverageSport.count.toLocaleString()} items loaded` : "No supported sports yet"}
           />
         </div>
 
-        {/* Main grid */}
         <div className="mt-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
-          {/* Left rail: live threads */}
           <aside className="lg:col-span-3 lg:self-start">
             <section className="sl-plasma-card">
               <div className="sl-plasma-inner rounded-2xl border border-cyan-400/20 bg-white/5 p-5">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h2 className="text-base font-semibold">Live Game Threads</h2>
-                    <div className="mt-1 text-xs text-white/60">Active and near-start community rooms, top-aligned with the feed</div>
+                    <div className="mt-1 text-xs text-white/60">
+                      Active and near-start community rooms, top-aligned with the feed
+                    </div>
                   </div>
                   <Link
                     href="/dashboard/community"
@@ -520,15 +607,26 @@ export default function GeneralDashboard() {
                               {isLive ? "Live" : item.status}
                             </span>
                             <span className="text-[11px] text-white/55">
-                              {dt ? (isLive ? agoLabel(dt) : dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) : "TBD"}
+                              {dt
+                                ? isLive
+                                  ? agoLabel(dt)
+                                  : dt.toLocaleTimeString([], {
+                                      hour: "numeric",
+                                      minute: "2-digit",
+                                    })
+                                : "TBD"}
                             </span>
                           </div>
 
-                          <div className="mt-3 text-sm font-semibold leading-snug">{scoreline}</div>
+                          <div className="mt-3 text-sm font-semibold leading-snug">
+                            {scoreline}
+                          </div>
                           <div className="mt-1 text-[11px] text-white/55">
                             {SPORT_LABEL[item.sport] ?? item.sport.toUpperCase()}
                             {item.phase ? ` • ${item.phase}` : ""}
-                            {item.message_count ? ` • ${item.message_count} messages` : " • new thread"}
+                            {item.message_count
+                              ? ` • ${item.message_count} messages`
+                              : " • new thread"}
                           </div>
 
                           {item.latest_message_preview ? (
@@ -560,7 +658,6 @@ export default function GeneralDashboard() {
             </section>
           </aside>
 
-          {/* Latest Headlines */}
           <section className="lg:col-span-6 sl-plasma-card">
             <div className="sl-plasma-inner rounded-2xl border border-white/10 bg-white/5 p-5">
               <div className="flex items-center justify-between">
@@ -613,9 +710,7 @@ export default function GeneralDashboard() {
             </div>
           </section>
 
-          {/* Right column: Trends + Coverage */}
           <div className="lg:col-span-3 space-y-6">
-            {/* Trending Topics */}
             <section className="sl-plasma-card">
               <div className="sl-plasma-inner rounded-2xl border border-white/10 bg-white/5 p-5">
                 <div className="flex items-center justify-between">
@@ -659,7 +754,6 @@ export default function GeneralDashboard() {
               </div>
             </section>
 
-            {/* Coverage by Sport */}
             <section className="sl-plasma-card">
               <div className="sl-plasma-inner rounded-2xl border border-white/10 bg-white/5 p-5">
                 <div className="flex items-center justify-between">
@@ -685,7 +779,7 @@ export default function GeneralDashboard() {
                           <Link
                             key={s.key}
                             href={`/dashboard/${s.key}`}
-                            className="rounded-xl border border-white/10 bg-black/25 p-3"
+                            className="block rounded-xl border border-white/10 bg-black/25 p-3 hover:bg-black/35 transition"
                           >
                             <div className="flex items-center justify-between gap-3">
                               <div className="text-sm font-semibold">
@@ -710,7 +804,6 @@ export default function GeneralDashboard() {
           </div>
         </div>
 
-        {/* Footer */}
         <div className="mt-8 text-xs text-white/50">
           Powered by your DB via <span className="text-white/70">/news</span>,{" "}
           <span className="text-white/70">/meta/sports</span>,{" "}
