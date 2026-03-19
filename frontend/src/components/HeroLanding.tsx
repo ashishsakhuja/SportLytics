@@ -1,15 +1,63 @@
 "use client";
 
 import { motion, useMotionValue, useSpring } from "framer-motion";
-import Link from "next/link";
-import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+
+const TOS_ACCEPTANCE_KEY = "sportlytics.tos.accepted.v1";
+
+const dataSources = [
+  {
+    title: "League data and game context",
+    body:
+      "SportLytics aggregates schedules, game results, standings context, and selected statistical fields from third-party sports data sources and public web endpoints used by the platform. Current integrations include ESPN-powered league/game endpoints for NFL, NBA, MLB, and NHL data, plus NFL-related standings/game references from NFL.com where applicable.",
+  },
+  {
+    title: "News and content feeds",
+    body:
+      "News cards and content discovery may incorporate RSS or article metadata from publishers and feeds such as ESPN, Yahoo Sports, and CBS Sports. All article titles, publisher names, links, and external coverage remain the property of their respective owners.",
+  },
+  {
+    title: "AI features",
+    body:
+      "Pulse, chart explanations, and other AI-assisted summaries may use OpenAI-powered language models to transform already-available platform data into readable insights. AI responses are generated content, may contain mistakes, and should be treated as informational assistance rather than guaranteed fact, official analysis, or professional advice.",
+  },
+  {
+    title: "Community and user content",
+    body:
+      "Community posts, shared charts, comments, and other user submissions may include user-authored text, uploaded chart snapshots, or generated summaries. Users remain responsible for the content they submit or share through the platform.",
+  },
+];
+
+const communityRules = [
+  "Be respectful. No harassment, hate speech, discrimination, threats, bullying, or personal attacks.",
+  "Keep discussions sports-focused, constructive, and safe for a broad audience.",
+  "Do not spam, troll, flood chats, post repetitive content, or intentionally derail conversations.",
+  "Avoid excessive profanity, abusive language, sexually explicit material, or violent/gory descriptions in community spaces.",
+  "Do not impersonate athletes, teams, leagues, staff, brands, or other users.",
+  "Do not post private, confidential, or personally identifying information about yourself or anyone else.",
+  "Do not share unlawful, infringing, deceptive, malicious, or harmful content, including scams or malware links.",
+  "Give proper context when sharing charts or claims. Do not intentionally misrepresent data, screenshots, or analysis.",
+  "Use Pulse and AI features responsibly. Do not try to generate abusive, deceptive, or unsafe content through the platform.",
+  "Moderation decisions may include content removal, access restrictions, or account-related action to protect the community and platform integrity.",
+];
 
 export default function HeroLanding() {
+  const router = useRouter();
   const mx = useMotionValue(0);
   const my = useMotionValue(0);
-
   const sx = useSpring(mx, { stiffness: 70, damping: 20 });
   const sy = useSpring(my, { stiffness: 70, damping: 20 });
+
+  const [mounted, setMounted] = useState(false);
+  const [tosOpen, setTosOpen] = useState(false);
+  const [agreeTerms, setAgreeTerms] = useState(false);
+  const [agreeCommunity, setAgreeCommunity] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -22,204 +70,392 @@ export default function HeroLanding() {
     return () => window.removeEventListener("mousemove", onMove);
   }, [mx, my]);
 
+  useEffect(() => {
+    if (!tosOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setTosOpen(false);
+    };
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [tosOpen]);
+
+  const canContinue = useMemo(() => agreeTerms && agreeCommunity, [agreeTerms, agreeCommunity]);
+
+  const handleEnter = () => {
+    if (typeof window !== "undefined") {
+      const accepted = window.localStorage.getItem(TOS_ACCEPTANCE_KEY);
+      if (accepted === "true") {
+        router.push("/dashboard");
+        return;
+      }
+    }
+    setTosOpen(true);
+  };
+
+  const handleAcceptAndContinue = () => {
+    if (!canContinue) return;
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(TOS_ACCEPTANCE_KEY, "true");
+    }
+    setTosOpen(false);
+    router.push("/dashboard");
+  };
+
+  const modal = mounted && tosOpen
+    ? createPortal(
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setTosOpen(false);
+          }}
+        >
+          <div
+            className="w-full max-w-5xl overflow-hidden rounded-[30px] border border-white/10 bg-[#09090d] shadow-[0_24px_90px_rgba(0,0,0,0.72)]"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-white/10 bg-gradient-to-r from-cyan-500/10 via-fuchsia-500/10 to-transparent px-6 py-5 sm:px-8">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.26em] text-cyan-200/70">
+                    SportLytics access agreement
+                  </div>
+                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+                    Terms of Service, Data Sources, and Community Guidelines
+                  </h2>
+                  <p className="mt-3 max-w-3xl text-sm leading-6 text-white/70 sm:text-[15px]">
+                    Before entering the dashboard, please review and accept the current SportLytics platform terms. This notice explains how the platform uses third-party sports data, news feeds, and AI-generated features, along with the standards expected in community spaces.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setTosOpen(false)}
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/70 transition hover:bg-white/10 hover:text-white"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="max-h-[70vh] overflow-y-auto px-6 py-6 sm:px-8">
+              <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+                <div className="space-y-6">
+                  <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+                    <h3 className="text-lg font-semibold text-white">1. Platform use and important disclaimers</h3>
+                    <div className="mt-3 space-y-3 text-sm leading-7 text-white/72">
+                      <p>
+                        SportLytics is an analytics, visualization, community, and AI-assisted sports experience. By continuing, you acknowledge that platform content is provided for informational, educational, and entertainment purposes only.
+                      </p>
+                      <p>
+                        SportLytics does not guarantee that every chart, article, feed item, score, advanced metric, AI-generated explanation, or community post is complete, current, error-free, uninterrupted, or suitable for any specific decision.
+                      </p>
+                      <p>
+                        Nothing on SportLytics should be relied upon as legal, financial, betting, gambling, medical, or professional advice. You remain solely responsible for how you interpret and use platform content.
+                      </p>
+                    </div>
+                  </section>
+
+                  <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+                    <h3 className="text-lg font-semibold text-white">2. Data sources, APIs, and attribution</h3>
+                    <div className="mt-4 space-y-4 text-sm leading-7 text-white/72">
+                      {dataSources.map((item) => (
+                        <div key={item.title} className="rounded-2xl border border-white/8 bg-black/20 p-4">
+                          <div className="font-semibold text-white/92">{item.title}</div>
+                          <div className="mt-2">{item.body}</div>
+                        </div>
+                      ))}
+                      <p>
+                        Third-party names, logos, marks, headlines, league references, and source materials belong to their respective owners. SportLytics does not claim ownership of external league data, publisher content, or linked articles unless expressly stated.
+                      </p>
+                      <p>
+                        Source availability, rate limits, format changes, licensing restrictions, endpoint updates, or provider outages may affect platform functionality, historical completeness, and freshness of displayed information.
+                      </p>
+                    </div>
+                  </section>
+
+                  <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+                    <h3 className="text-lg font-semibold text-white">3. AI-generated insights and Pulse usage</h3>
+                    <div className="mt-3 space-y-3 text-sm leading-7 text-white/72">
+                      <p>
+                        Pulse responses, chart captions, chart Q&amp;A, and other AI-assisted outputs may summarize trends, compare teams, or convert structured data into natural language. These outputs can be helpful, but they may occasionally be incomplete, stale, approximate, or incorrect.
+                      </p>
+                      <p>
+                        By using AI features, you understand that generated text should be verified against the underlying chart, article, table, or source context before being relied upon or shared as fact.
+                      </p>
+                      <p>
+                        You may not use SportLytics AI features to generate abusive, harassing, illegal, fraudulent, or misleading content, or to intentionally produce harmful prompts or community content.
+                      </p>
+                    </div>
+                  </section>
+
+                  <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+                    <h3 className="text-lg font-semibold text-white">4. User content, sharing, and moderation</h3>
+                    <div className="mt-3 space-y-3 text-sm leading-7 text-white/72">
+                      <p>
+                        If you share charts, write posts, reply in discussions, or interact in community features, you are responsible for the accuracy, tone, legality, and appropriateness of your submissions.
+                      </p>
+                      <p>
+                        SportLytics may remove, restrict, review, or moderate content that appears abusive, deceptive, infringing, spammy, unsafe, or otherwise inconsistent with platform rules or community health.
+                      </p>
+                      <p>
+                        Repeated or severe violations may lead to content removal, temporary restrictions, or loss of access to certain platform areas.
+                      </p>
+                    </div>
+                  </section>
+                </div>
+
+                <div className="space-y-6">
+                  <section className="rounded-[24px] border border-fuchsia-400/15 bg-fuchsia-500/[0.04] p-5">
+                    <h3 className="text-lg font-semibold text-white">Community guidelines</h3>
+                    <p className="mt-3 text-sm leading-7 text-white/72">
+                      SportLytics is intended to be sharp, insightful, and competitive without becoming hostile. By joining community areas, you agree to uphold the following standards:
+                    </p>
+                    <ul className="mt-4 space-y-3 text-sm leading-6 text-white/78">
+                      {communityRules.map((rule) => (
+                        <li key={rule} className="flex gap-3 rounded-2xl border border-white/8 bg-black/20 p-3">
+                          <span className="mt-[2px] h-2.5 w-2.5 shrink-0 rounded-full bg-fuchsia-300/80" />
+                          <span>{rule}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+
+                  <section className="rounded-[24px] border border-cyan-400/15 bg-cyan-500/[0.04] p-5">
+                    <h3 className="text-lg font-semibold text-white">Privacy and account expectations</h3>
+                    <div className="mt-3 space-y-3 text-sm leading-7 text-white/72">
+                      <p>
+                        Do not post sensitive personal data, private conversations, payment information, or anything you would not want publicly associated with your name or profile.
+                      </p>
+                      <p>
+                        You are responsible for protecting your own device, browser session, and any account credentials associated with your access to SportLytics.
+                      </p>
+                      <p>
+                        SportLytics may store preference, session, or acceptance state locally in your browser to improve usability, including remembering acceptance of this agreement.
+                      </p>
+                    </div>
+                  </section>
+
+                  <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
+                    <h3 className="text-lg font-semibold text-white">Acknowledgment</h3>
+                    <div className="mt-4 space-y-4 text-sm text-white/80">
+                      <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-4 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={agreeTerms}
+                          onChange={(e) => setAgreeTerms(e.target.checked)}
+                          className="mt-1 h-4 w-4 rounded border-white/20 bg-transparent accent-cyan-400"
+                        />
+                        <span className="leading-6">
+                          I have reviewed and accept the SportLytics Terms of Service, platform disclaimers, AI-use notice, and source attribution information above.
+                        </span>
+                      </label>
+
+                      <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-4 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={agreeCommunity}
+                          onChange={(e) => setAgreeCommunity(e.target.checked)}
+                          className="mt-1 h-4 w-4 rounded border-white/20 bg-transparent accent-fuchsia-400"
+                        />
+                        <span className="leading-6">
+                          I agree to follow the SportLytics community guidelines, engage respectfully, avoid harassment or abusive language, and use shared spaces responsibly.
+                        </span>
+                      </label>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-white/10 px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+              <p className="max-w-3xl text-xs leading-6 text-white/50">
+                By selecting continue, you acknowledge this agreement and understand it may be updated as SportLytics features, data providers, community tools, and AI capabilities evolve.
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setTosOpen(false)}
+                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white"
+                >
+                  Not now
+                </button>
+                <button
+                  onClick={handleAcceptAndContinue}
+                  disabled={!canContinue}
+                  className="rounded-full border border-cyan-400/30 bg-cyan-500/12 px-5 py-2.5 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-500/18 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  Agree and continue
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )
+    : null;
+
   return (
-    <main className="relative min-h-screen overflow-hidden bg-black text-white">
-      {/* Scoreboard Glow Strip */}
-      <div className="absolute top-0 left-0 right-0 h-16 opacity-80 z-[2]">
-        <div className="absolute inset-0 bg-gradient-to-b from-white/15 via-cyan-400/15 to-transparent blur-xl" />
-        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
-      </div>
+    <>
+      <main className="relative min-h-screen overflow-hidden bg-black text-white">
+        <div className="absolute top-0 left-0 right-0 h-16 opacity-80 z-[2]">
+          <div className="absolute inset-0 bg-gradient-to-b from-white/15 via-cyan-400/15 to-transparent blur-xl" />
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+        </div>
 
-      {/* Cinematic Motion Background */}
-      <motion.div className="absolute inset-0 z-[0]" style={{ x: sx, y: sy }}>
-        {/* Flood Lights */}
-        <motion.div
-          className="absolute -top-32 -left-52 h-[600px] w-[800px] blur-2xl opacity-70"
-          style={{
-            background:
-              "conic-gradient(from 200deg at 65% 35%, rgba(255,255,255,0.45), rgba(255,255,255,0) 65%)",
-          }}
-          animate={{ opacity: [0.5, 0.9, 0.6] }}
-          transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-        />
+        <motion.div className="absolute inset-0 z-[0]" style={{ x: sx, y: sy }}>
+          <motion.div
+            className="absolute -top-32 -left-52 h-[600px] w-[800px] blur-2xl opacity-70"
+            style={{
+              background:
+                "conic-gradient(from 200deg at 65% 35%, rgba(255,255,255,0.45), rgba(255,255,255,0) 65%)",
+            }}
+            animate={{ opacity: [0.5, 0.9, 0.6] }}
+            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+          />
 
-        <motion.div
-          className="absolute -top-32 -right-52 h-[600px] w-[800px] blur-2xl opacity-70"
-          style={{
-            background:
-              "conic-gradient(from 340deg at 35% 35%, rgba(255,255,255,0.45), rgba(255,255,255,0) 65%)",
-          }}
-          animate={{ opacity: [0.5, 0.9, 0.6] }}
-          transition={{
-            duration: 4.2,
-            repeat: Infinity,
-            ease: "easeInOut",
-            delay: 0.4,
-          }}
-        />
+          <motion.div
+            className="absolute -top-32 -right-52 h-[600px] w-[800px] blur-2xl opacity-70"
+            style={{
+              background:
+                "conic-gradient(from 340deg at 35% 35%, rgba(255,255,255,0.45), rgba(255,255,255,0) 65%)",
+            }}
+            animate={{ opacity: [0.5, 0.9, 0.6] }}
+            transition={{ duration: 4.2, repeat: Infinity, ease: "easeInOut", delay: 0.4 }}
+          />
 
-        {/* Color Energy */}
-        <motion.div
-          className="absolute -bottom-52 left-[5%] h-[800px] w-[800px] rounded-full blur-3xl opacity-85 mix-blend-screen"
-          style={{
-            background:
-              "radial-gradient(circle at 40% 40%, rgba(34,211,238,0.65), transparent 65%), radial-gradient(circle at 70% 60%, rgba(99,102,241,0.55), transparent 60%)",
-          }}
-          animate={{
-            x: [0, 200, -200, 0],
-            y: [0, 120, -150, 0],
-            rotate: [0, 15, -12, 0],
-            scale: [1, 1.15, 0.95, 1],
-          }}
-          transition={{ duration: 6.5, repeat: Infinity, ease: "easeInOut" }}
-        />
+          <motion.div
+            className="absolute -bottom-52 left-[5%] h-[800px] w-[800px] rounded-full blur-3xl opacity-85 mix-blend-screen"
+            style={{
+              background:
+                "radial-gradient(circle at 40% 40%, rgba(34,211,238,0.65), transparent 65%), radial-gradient(circle at 70% 60%, rgba(99,102,241,0.55), transparent 60%)",
+            }}
+            animate={{ x: [0, 200, -200, 0], y: [0, 120, -150, 0], rotate: [0, 15, -12, 0], scale: [1, 1.15, 0.95, 1] }}
+            transition={{ duration: 6.5, repeat: Infinity, ease: "easeInOut" }}
+          />
 
-        <motion.div
-          className="absolute top-0 right-[10%] h-[700px] w-[700px] rounded-full blur-3xl opacity-80 mix-blend-screen"
-          style={{
-            background:
-              "radial-gradient(circle at 35% 30%, rgba(236,72,153,0.55), transparent 60%), radial-gradient(circle at 70% 70%, rgba(168,85,247,0.45), transparent 60%)",
-          }}
-          animate={{
-            x: [0, -180, 150, 0],
-            y: [0, 140, -120, 0],
-            rotate: [0, -15, 12, 0],
-            scale: [1, 1.2, 0.95, 1],
-          }}
-          transition={{
-            duration: 6,
-            repeat: Infinity,
-            ease: "easeInOut",
-            delay: 0.5,
-          }}
-        />
+          <motion.div
+            className="absolute top-0 right-[10%] h-[700px] w-[700px] rounded-full blur-3xl opacity-80 mix-blend-screen"
+            style={{
+              background:
+                "radial-gradient(circle at 35% 30%, rgba(236,72,153,0.55), transparent 60%), radial-gradient(circle at 70% 70%, rgba(168,85,247,0.45), transparent 60%)",
+            }}
+            animate={{ x: [0, -180, 150, 0], y: [0, 140, -120, 0], rotate: [0, -15, 12, 0], scale: [1, 1.2, 0.95, 1] }}
+            transition={{ duration: 6, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
+          />
 
-        {/* Light Sweep */}
-        <motion.div
-          className="absolute -left-1/2 top-0 h-full w-1/2 opacity-40 blur-2xl"
-          style={{
-            background:
-              "linear-gradient(120deg, rgba(255,255,255,0) 10%, rgba(255,255,255,0.35) 45%, rgba(255,255,255,0) 80%)",
-            transform: "skewX(-15deg)",
-          }}
-          animate={{ x: ["-70%", "250%"] }}
-          transition={{
-            duration: 5,
-            repeat: Infinity,
-            ease: "easeInOut",
-            repeatDelay: 1,
-          }}
-        />
-      </motion.div>
+          <motion.div
+            className="absolute -left-1/2 top-0 h-full w-1/2 opacity-40 blur-2xl"
+            style={{
+              background:
+                "linear-gradient(120deg, rgba(255,255,255,0) 10%, rgba(255,255,255,0.35) 45%, rgba(255,255,255,0) 80%)",
+              transform: "skewX(-15deg)",
+            }}
+            animate={{ x: ["-70%", "250%"] }}
+            transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", repeatDelay: 1 }}
+          />
+        </motion.div>
 
-      {/* FIELD SECTION */}
-      <div className="absolute bottom-0 left-0 right-0 h-[380px] z-[1] pointer-events-none">
-        {/* Greener Turf Base */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              "linear-gradient(to top, rgba(25,150,70,0.95) 0%, rgba(15,85,45,0.65) 48%, rgba(0,0,0,0) 100%)",
-          }}
-        />
+        <div className="absolute bottom-0 left-0 right-0 h-[380px] z-[1] pointer-events-none">
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(to top, rgba(25,150,70,0.95) 0%, rgba(15,85,45,0.65) 48%, rgba(0,0,0,0) 100%)",
+            }}
+          />
 
-        {/* Mowing Stripes */}
-        <div
-          className="absolute inset-0 opacity-[0.25]"
-          style={{
-            background:
-              "repeating-linear-gradient(to top, rgba(255,255,255,0.08) 0px, rgba(255,255,255,0.08) 26px, transparent 26px, transparent 52px)",
-            maskImage:
-              "linear-gradient(to top, black 0%, black 72%, transparent 100%)",
-          }}
-        />
+          <div
+            className="absolute inset-0 opacity-[0.25]"
+            style={{
+              background:
+                "repeating-linear-gradient(to top, rgba(255,255,255,0.08) 0px, rgba(255,255,255,0.08) 26px, transparent 26px, transparent 52px)",
+              maskImage:
+                "linear-gradient(to top, black 0%, black 72%, transparent 100%)",
+            }}
+          />
 
-        {/* Yard Lines */}
-        <div
-          className="absolute inset-0 opacity-[0.40]"
-          style={{
-            background:
-              "repeating-linear-gradient(to right, rgba(255,255,255,0.28) 0px, rgba(255,255,255,0.28) 2px, transparent 2px, transparent 72px)",
-            maskImage:
-              "linear-gradient(to top, black 0%, black 72%, transparent 100%)",
-          }}
-        />
+          <div
+            className="absolute inset-0 opacity-[0.40]"
+            style={{
+              background:
+                "repeating-linear-gradient(to right, rgba(255,255,255,0.28) 0px, rgba(255,255,255,0.28) 2px, transparent 2px, transparent 72px)",
+              maskImage:
+                "linear-gradient(to top, black 0%, black 72%, transparent 100%)",
+            }}
+          />
 
-        {/* Hash Marks */}
-        <div
-          className="absolute inset-0 opacity-[0.30]"
-          style={{
-            background:
-              "repeating-linear-gradient(to right, transparent 0px, transparent 34px, rgba(255,255,255,0.22) 34px, rgba(255,255,255,0.22) 36px, transparent 36px, transparent 72px)",
-            maskImage:
-              "linear-gradient(to top, black 0%, black 64%, transparent 100%)",
-          }}
-        />
+          <div
+            className="absolute inset-0 opacity-[0.30]"
+            style={{
+              background:
+                "repeating-linear-gradient(to right, transparent 0px, transparent 34px, rgba(255,255,255,0.22) 34px, rgba(255,255,255,0.22) 36px, transparent 36px, transparent 72px)",
+              maskImage:
+                "linear-gradient(to top, black 0%, black 64%, transparent 100%)",
+            }}
+          />
 
-        {/* Yard Numbers (Brighter) */}
-        <div className="absolute inset-0">
-          <div className="absolute bottom-14 left-8 flex gap-8 text-white/70 font-extrabold tracking-widest select-none">
-            {["10", "20", "30", "40"].map((n) => (
-              <span
-                key={n}
-                className="text-4xl drop-shadow-[0_0_18px_rgba(255,255,255,0.35)]"
-              >
-                {n}
-              </span>
-            ))}
-          </div>
+          <div className="absolute inset-0">
+            <div className="absolute bottom-14 left-8 flex gap-8 text-white/70 font-extrabold tracking-widest select-none">
+              {["10", "20", "30", "40"].map((n) => (
+                <span key={n} className="text-4xl drop-shadow-[0_0_18px_rgba(255,255,255,0.35)]">
+                  {n}
+                </span>
+              ))}
+            </div>
 
-          <div className="absolute bottom-14 right-8 flex gap-8 text-white/70 font-extrabold tracking-widest select-none">
-            {["40", "30", "20", "10"].map((n) => (
-              <span
-                key={n}
-                className="text-4xl drop-shadow-[0_0_18px_rgba(255,255,255,0.35)]"
-              >
-                {n}
-              </span>
-            ))}
+            <div className="absolute bottom-14 right-8 flex gap-8 text-white/70 font-extrabold tracking-widest select-none">
+              {["40", "30", "20", "10"].map((n) => (
+                <span key={n} className="text-4xl drop-shadow-[0_0_18px_rgba(255,255,255,0.35)]">
+                  {n}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Overlay */}
-      <div className="absolute inset-0 z-[1] bg-gradient-to-b from-black/10 via-black/35 to-black/45" />
+        <div className="absolute inset-0 z-[1] bg-gradient-to-b from-black/10 via-black/35 to-black/45" />
 
-      {/* Vignette */}
-      <div
-        className="absolute inset-0 z-[2] pointer-events-none"
-        style={{
-          background:
-            "radial-gradient(circle at center, rgba(0,0,0,0) 40%, rgba(0,0,0,0.65) 100%)",
-        }}
-      />
+        <div
+          className="absolute inset-0 z-[2] pointer-events-none"
+          style={{
+            background:
+              "radial-gradient(circle at center, rgba(0,0,0,0) 40%, rgba(0,0,0,0.65) 100%)",
+          }}
+        />
 
-      {/* Content */}
-      <section className="relative z-[3] flex min-h-screen items-center justify-center px-6">
-        <div className="text-center">
-          <h1 className="text-5xl sm:text-6xl md:text-7xl font-semibold tracking-tight">
-            Sport<span className="text-white/90">Lytics</span>
-          </h1>
+        <section className="relative z-[3] flex min-h-screen items-center justify-center px-6">
+          <div className="text-center">
+            <h1 className="text-5xl sm:text-6xl md:text-7xl font-semibold tracking-tight">
+              Sport<span className="text-white/90">Lytics</span>
+            </h1>
 
-          <p className="mt-4 text-base sm:text-lg md:text-xl text-white/85">
-            Where data meets Sports
-          </p>
+            <p className="mt-4 text-base sm:text-lg md:text-xl text-white/85">
+              Where Data Meets Sports
+            </p>
 
-          <div className="mt-8 flex items-center justify-center">
-            <Link
-              href="/dashboard"
-              className="group inline-flex items-center justify-center rounded-full px-6 py-3 text-sm sm:text-base font-semibold bg-white/10 border border-white/20 backdrop-blur-md hover:bg-white/20 hover:border-white/40 active:scale-[0.99] transition"
-            >
-              <span className="mr-2">Get in the Game</span>
-              <span className="inline-block transition-transform group-hover:translate-x-1">
-                →
-              </span>
-            </Link>
+            <div className="mt-8 flex items-center justify-center">
+              <button
+                type="button"
+                onClick={handleEnter}
+                className="group inline-flex items-center justify-center rounded-full px-6 py-3 text-sm sm:text-base font-semibold bg-white/10 border border-white/20 backdrop-blur-md hover:bg-white/20 hover:border-white/40 active:scale-[0.99] transition"
+              >
+                <span className="mr-2">Get in the Game</span>
+                <span className="inline-block transition-transform group-hover:translate-x-1">
+                  →
+                </span>
+              </button>
+            </div>
+
+            <div className="mx-auto mt-8 h-[3px] w-32 rounded-full bg-white/30" />
           </div>
-
-          <div className="mx-auto mt-8 h-[3px] w-32 rounded-full bg-white/30" />
-        </div>
-      </section>
-    </main>
+        </section>
+      </main>
+      {modal}
+    </>
   );
 }
