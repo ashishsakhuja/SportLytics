@@ -394,16 +394,19 @@ def _season_aggregate(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _build_overlay_rows(series_rows: Dict[str, List[Dict[str, Any]]], roll_window: int) -> List[Dict[str, Any]]:
     key_meta: Dict[str, Dict[str, Any]] = {}
-    ordered_x: List[str] = []
-    seen_x = set()
+
+    def _sort_key(row: Dict[str, Any], fallback_index: int) -> tuple:
+        season = int(row.get("season") or 0)
+        date_value = row.get("date") or ""
+        idx = int(row.get("idx") or (fallback_index + 1))
+        x = str(row.get("x") or f"P{fallback_index + 1}")
+        return (season, date_value, idx, x)
 
     for series_key, rows in series_rows.items():
         rolled = _roll([r.get("value") for r in rows], roll_window)
         for i, row in enumerate(rows):
             x = row.get("x") or f"P{i + 1}"
-            if x not in seen_x:
-                seen_x.add(x)
-                ordered_x.append(x)
+            row_sort_key = _sort_key(row, i)
             meta = key_meta.setdefault(
                 x,
                 {
@@ -415,11 +418,25 @@ def _build_overlay_rows(series_rows: Dict[str, List[Dict[str, Any]]], roll_windo
                     "opponent": row.get("opponent"),
                     "home_away": row.get("home_away"),
                     "result": row.get("result"),
+                    "_sort_key": row_sort_key,
                 },
             )
+            if row_sort_key < meta.get("_sort_key", row_sort_key):
+                meta["_sort_key"] = row_sort_key
+                meta["label"] = row.get("point_label") or x
+                meta["tooltipLabel"] = row.get("date") or row.get("point_label") or x
+                meta["season"] = row.get("season")
+                meta["date"] = row.get("date")
+                meta["opponent"] = row.get("opponent")
+                meta["home_away"] = row.get("home_away")
+                meta["result"] = row.get("result")
             meta[series_key] = row.get("value")
             meta[f"{series_key}__roll"] = rolled[i]
-    return [key_meta[x] for x in ordered_x]
+
+    ordered_rows = sorted(key_meta.values(), key=lambda row: row.get("_sort_key", (0, "", 0, str(row.get("x") or ""))))
+    for row in ordered_rows:
+        row.pop("_sort_key", None)
+    return ordered_rows
 
 
 

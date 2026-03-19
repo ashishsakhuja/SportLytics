@@ -212,6 +212,8 @@ export default function CustomBuilderPage() {
   const [homeAway, setHomeAway] = useState("all");
   const [resultFilter, setResultFilter] = useState("all");
   const [rollWindow, setRollWindow] = useState("5");
+  const [xAxisWindow, setXAxisWindow] = useState("all");
+  const [customRange, setCustomRange] = useState("5");
 
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [loadingPlot, setLoadingPlot] = useState(false);
@@ -361,16 +363,34 @@ export default function CustomBuilderPage() {
 
   const selectedOverlayCount = useMemo(() => overlayTeams.length + 1, [overlayTeams]);
 
-  const chartData = useMemo(() => plot?.rows ?? [], [plot]);
+  const fullChartData = useMemo(() => plot?.rows ?? [], [plot]);
 
+  const visiblePointLimit = useMemo(() => {
+    if (xAxisWindow === "all") return null;
+    const raw = xAxisWindow === "custom" ? customRange : xAxisWindow.replace("last_", "");
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return parsed;
+  }, [xAxisWindow, customRange]);
+
+  const chartData = useMemo(() => {
+    if (!visiblePointLimit) return fullChartData;
+    return fullChartData.slice(-visiblePointLimit);
+  }, [fullChartData, visiblePointLimit]);
 
   const visibleSeries = useMemo(() => {
     return (plot?.series ?? []).map((series, index) => ({
       ...series,
+      points: visiblePointLimit ? (series.points ?? []).slice(-visiblePointLimit) : series.points,
       color: SERIES_COLORS[index % SERIES_COLORS.length],
       rollColor: SERIES_COLORS[(index + 3) % SERIES_COLORS.length],
     }));
-  }, [plot]);
+  }, [plot, visiblePointLimit]);
+
+  const rangeBadge = useMemo(() => {
+    if (!visiblePointLimit) return "Full range";
+    return `Last ${visiblePointLimit}`;
+  }, [visiblePointLimit]);
 
   function applyPreset(key: PresetKey) {
     if (!options) return;
@@ -537,6 +557,7 @@ export default function CustomBuilderPage() {
               stroke={series.color}
               strokeWidth={3}
               dot={false}
+              connectNulls={compareMode === "overlay"}
             />
           ))}
           {plot.granularity === "game" && plot.roll_window > 1 && chartType === "line"
@@ -551,6 +572,7 @@ export default function CustomBuilderPage() {
                     strokeWidth={2}
                     dot={false}
                     strokeDasharray="5 5"
+                    connectNulls={compareMode === "overlay"}
                   />
                 ) : null
               )
@@ -629,7 +651,7 @@ export default function CustomBuilderPage() {
 
   const previewRows = useMemo(() => {
     if (plot?.chart_type === "scatter") {
-      return (plot?.series ?? []).flatMap((series) =>
+      return visibleSeries.flatMap((series) =>
         (series.points ?? []).map((point) => ({
           tooltipLabel: point.tooltipLabel,
           x: point.x,
@@ -641,16 +663,25 @@ export default function CustomBuilderPage() {
       );
     }
     return chartData;
-  }, [plot, chartData]);
+  }, [plot, chartData, visibleSeries]);
+
+  const displayedPointCount = useMemo(() => {
+    if (!plot) return 0;
+    if (plot.chart_type === "scatter") {
+      return visibleSeries.reduce((sum, series) => sum + (series.points?.length ?? 0), 0);
+    }
+    return chartData.length;
+  }, [plot, visibleSeries, chartData]);
 
   const quickInsights = useMemo(() => {
     if (!plot) return [] as string[];
 
     const insights: string[] = [];
-    const pointCount = plot.summary.points ?? 0;
+    const pointCount = displayedPointCount;
+    const totalPoints = plot.summary.points ?? pointCount;
 
     insights.push(
-      `${plot.metric_label} returned ${pointCount} point${pointCount === 1 ? "" : "s"} for ${team || plot.team} across ${plot.season_from}–${plot.season_to}.`
+      `${plot.metric_label} is showing ${pointCount} point${pointCount === 1 ? "" : "s"} for ${team || plot.team}${pointCount !== totalPoints ? ` (${rangeBadge.toLowerCase()} of ${totalPoints})` : ""}.`
     );
 
     if (plot.summary.primary_avg != null) {
@@ -679,7 +710,7 @@ export default function CustomBuilderPage() {
     }
 
     return insights.slice(0, 3);
-  }, [plot, team]);
+  }, [plot, team, displayedPointCount, rangeBadge]);
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -957,6 +988,33 @@ export default function CustomBuilderPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
+                  <ControlLabel>X-Axis Window</ControlLabel>
+                  <Select value={xAxisWindow} onChange={setXAxisWindow}>
+                    <option value="all">Full range</option>
+                    <option value="last_5">Last 5</option>
+                    <option value="last_10">Last 10</option>
+                    <option value="last_25">Last 25</option>
+                    <option value="last_50">Last 50</option>
+                    <option value="custom">Custom</option>
+                  </Select>
+                </div>
+                <div>
+                  <ControlLabel>Custom Visible Points</ControlLabel>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={customRange}
+                    onChange={(e) => setCustomRange(e.target.value)}
+                    disabled={xAxisWindow !== "custom"}
+                    className="w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2.5 text-sm text-white outline-none transition focus:border-fuchsia-400/60 disabled:cursor-not-allowed disabled:opacity-60"
+                    placeholder="e.g. 5"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
                   <ControlLabel>Location Split</ControlLabel>
                   <Select value={homeAway} onChange={setHomeAway}>
                     <option value="all">All</option>
@@ -988,10 +1046,10 @@ export default function CustomBuilderPage() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
             <SummaryCard
               label="Points Returned"
-              value={plot ? String(plot.summary.points) : "—"}
+              value={plot ? String(displayedPointCount) : "—"}
               sub={
                 plot
-                  ? `${plot.season_from}–${plot.season_to} ${plot.season_type}`
+                  ? `${plot.season_from}–${plot.season_to} ${plot.season_type} • ${rangeBadge}`
                   : "Waiting for chart"
               }
             />
@@ -1061,6 +1119,9 @@ export default function CustomBuilderPage() {
                 <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
                   {resultFilter === "all" ? "All results" : resultFilter}
                 </span>
+                <span className="rounded-full border border-fuchsia-400/25 bg-fuchsia-500/10 px-3 py-1.5 text-fuchsia-100">
+                  {rangeBadge}
+                </span>
               </div>
             </div>
 
@@ -1113,7 +1174,7 @@ export default function CustomBuilderPage() {
           <section className="rounded-[28px] border border-white/10 bg-white/5 p-5">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-semibold">Underlying Data Preview</h3>
-              <div className="text-xs text-white/50">First 12 rows shown</div>
+              <div className="text-xs text-white/50">Visible range • first 12 rows shown</div>
             </div>
 
             <div className="overflow-x-auto rounded-2xl border border-white/10">
