@@ -73,6 +73,8 @@ function avg(nums: Array<number | null | undefined>) {
   return clean.reduce((a, b) => a + b, 0) / clean.length;
 }
 
+const INGAME_BAR_BLUE = "rgba(59,130,246,0.82)";
+
 export default function NflInGameAnalytics({
   team,
   season,
@@ -546,7 +548,7 @@ export default function NflInGameAnalytics({
                     labelFormatter={(x) => `Game #${x}`}
                   />
                   <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                  <Bar dataKey="turnovers" name="turnovers" />
+                  <Bar dataKey="turnovers" name="turnovers" fill={INGAME_BAR_BLUE} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

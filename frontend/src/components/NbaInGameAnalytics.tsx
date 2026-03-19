@@ -84,6 +84,8 @@ function avg(nums: Array<number | null | undefined>) {
   return clean.reduce((a, b) => a + b, 0) / clean.length;
 }
 
+const INGAME_BAR_BLUE = "rgba(59,130,246,0.82)";
+
 export default function NbaInGameAnalytics({
   team,
   season,
@@ -104,6 +106,7 @@ export default function NbaInGameAnalytics({
   const efficiencyChartRef = useRef<HTMLDivElement | null>(null);
   const ballMovementChartRef = useRef<HTMLDivElement | null>(null);
   const paceChartRef = useRef<HTMLDivElement | null>(null);
+  const activityChartRef = useRef<HTMLDivElement | null>(null);
 
   const shootingRef = useRef<HTMLElement | null>(null);
   const efficiencyRef = useRef<HTMLElement | null>(null);
@@ -201,6 +204,21 @@ export default function NbaInGameAnalytics({
     };
   }, [rows]);
 
+  const activitySummary = useMemo(() => {
+    if (!rows.length) return null;
+    const last5 = rows.slice(-5);
+    const prev5 = rows.slice(-10, -5);
+    return {
+      games: rows.length,
+      last5_reb: avg(last5.map((r) => r.reb)),
+      prev5_reb: avg(prev5.map((r) => r.reb)),
+      last5_stl: avg(last5.map((r) => r.stl)),
+      prev5_stl: avg(prev5.map((r) => r.stl)),
+      last5_blk: avg(last5.map((r) => r.blk)),
+      prev5_blk: avg(prev5.map((r) => r.blk)),
+    };
+  }, [rows]);
+
   const scatterPossPoints = useMemo(() => {
     const wins: any[] = [];
     const losses: any[] = [];
@@ -260,6 +278,8 @@ export default function NbaInGameAnalytics({
         <div className="text-xs text-white/60">roll-{roll}</div>
       </div>
 
+      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <div>
       {/* Shooting % trend */}
       <div className="mt-4 text-sm font-semibold">Shooting Trends</div>
       <PlotActions exportRef={shootingChartRef} chartId="nba_shooting" chartTitle={`${team} Shooting Trends`} sport="nba" season={season} seasonType={seasonType} team={team} summary={shootingSummary} plotUrl={`/dashboard/nba`} shareBody={`Sharing the ${team} shooting trends chart.`} />
@@ -313,6 +333,9 @@ export default function NbaInGameAnalytics({
         />
       ) : null}
 
+        </div>
+
+        <div>
       {/* Efficiency trend */}
       <div className="mt-6 text-sm font-semibold">Efficiency Trends</div>
       <PlotActions exportRef={efficiencyChartRef} chartId="nba_efficiency" chartTitle={`${team} Efficiency Trends`} sport="nba" season={season} seasonType={seasonType} team={team} summary={efficiencySummary} plotUrl={`/dashboard/nba`} shareBody={`Sharing the ${team} efficiency trends chart.`} />
@@ -369,6 +392,9 @@ export default function NbaInGameAnalytics({
         />
       ) : null}
 
+        </div>
+
+        <div>
       {/* Ball movement */}
       <div className="mt-6 text-sm font-semibold">Ball Movement</div>
       <PlotActions exportRef={ballMovementChartRef} chartId="nba_ball_movement" chartTitle={`${team} Ball Movement`} sport="nba" season={season} seasonType={seasonType} team={team} summary={ballMovementSummary} plotUrl={`/dashboard/nba`} shareBody={`Sharing the ${team} ball movement chart.`} />
@@ -403,8 +429,8 @@ export default function NbaInGameAnalytics({
               iconSize={8}
               wrapperStyle={{ fontSize: 12, color: "rgba(255,255,255,0.75)" }}
             />
-            <Bar dataKey="ast" name="AST" />
-            <Bar dataKey="tov" name="TOV" />
+            <Bar dataKey="ast" name="AST" fill={INGAME_BAR_BLUE} />
+            <Bar dataKey="tov" name="TOV" fill="rgba(96,165,250,0.58)" />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -420,6 +446,9 @@ export default function NbaInGameAnalytics({
         />
       ) : null}
 
+        </div>
+
+        <div>
       {/* Possessions vs points */}
       <div className="mt-6 text-sm font-semibold">Pace & Offense Relationship</div>
       <PlotActions exportRef={paceChartRef} chartId="nba_pace_offense" chartTitle={`${team} Possessions vs Points`} sport="nba" season={season} seasonType={seasonType} team={team} summary={paceOffenseSummary} plotUrl={`/dashboard/nba`} shareBody={`Sharing the ${team} possessions vs points chart.`} />
@@ -481,6 +510,41 @@ export default function NbaInGameAnalytics({
           tip="If points rise with possessions flat, it’s efficiency; if possessions rise, it’s pace."
         />
       ) : null}
+
+
+        </div>
+
+        <div>
+      {/* Rebounding & activity */}
+      <div className="text-sm font-semibold">Rebounding & Activity</div>
+      <PlotActions exportRef={activityChartRef} chartId="nba_activity" chartTitle={`${team} Rebounding & Activity`} sport="nba" season={season} seasonType={seasonType} team={team} summary={activitySummary} plotUrl={`/dashboard/nba`} shareBody={`Sharing the ${team} rebounding and activity chart.`} />
+      <div ref={activityChartRef} className="mt-4 h-[280px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={rows.slice(-12)} margin={{ top: 28, right: 10, bottom: 10, left: -10 }}>
+            <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+            <XAxis dataKey="idx" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 11 }} axisLine={{ stroke: "rgba(255,255,255,0.15)" }} tickLine={{ stroke: "rgba(255,255,255,0.15)" }} />
+            <YAxis tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} axisLine={{ stroke: "rgba(255,255,255,0.15)" }} tickLine={{ stroke: "rgba(255,255,255,0.15)" }} />
+            <Tooltip contentStyle={{ background: "rgba(0,0,0,0.9)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 12, color: "white" }} labelFormatter={(l) => `Game #${l}`} />
+            <Legend verticalAlign="top" height={20} iconSize={8} wrapperStyle={{ fontSize: 12, color: "rgba(255,255,255,0.75)" }} />
+            <Bar dataKey="reb" name="REB" fill={INGAME_BAR_BLUE} />
+            <Bar dataKey="stl" name="STL" fill="rgba(96,165,250,0.58)" />
+            <Bar dataKey="blk" name="BLK" fill="rgba(147,197,253,0.45)" />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      {activitySummary ? (
+        <AIInsightsBox
+          chartId="nba_activity"
+          sport="nba"
+          season={season}
+          seasonType={seasonType}
+          team={team}
+          summary={activitySummary}
+          tip="Rebounding plus steals and blocks helps separate effort-driven wins from hot shooting nights."
+        />
+      ) : null}
+        </div>
+      </div>
 
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
         <div className="rounded-xl border border-white/10 bg-white/5 p-4">

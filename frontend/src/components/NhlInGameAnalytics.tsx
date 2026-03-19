@@ -66,6 +66,8 @@ function avg(nums: Array<number | null | undefined>) {
   return clean.reduce((a, b) => a + b, 0) / clean.length;
 }
 
+const INGAME_BAR_BLUE = "rgba(59,130,246,0.82)";
+
 export default function NhlInGameAnalytics({
   team,
   season,
@@ -389,7 +391,7 @@ export default function NhlInGameAnalytics({
                     labelFormatter={(x) => `Game #${x}`}
                   />
                   <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                  <Bar dataKey="penalty_minutes" name="penalty_minutes" />
+                  <Bar dataKey="penalty_minutes" name="penalty_minutes" fill={INGAME_BAR_BLUE} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -446,8 +448,8 @@ export default function NhlInGameAnalytics({
                     labelFormatter={(x) => `Game #${x}`}
                   />
                   <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                  <Bar dataKey="hits" name="hits" />
-                  <Bar dataKey="blocked_shots" name="blocked_shots" />
+                  <Bar dataKey="hits" name="hits" fill={INGAME_BAR_BLUE} />
+                  <Bar dataKey="blocked_shots" name="blocked_shots" fill="rgba(96,165,250,0.58)" />
                 </BarChart>
               </ResponsiveContainer>
             </div>

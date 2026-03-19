@@ -73,6 +73,8 @@ function avg(nums: Array<number | null | undefined>) {
   return clean.reduce((a, b) => a + b, 0) / clean.length;
 }
 
+const INGAME_BAR_BLUE = "rgba(59,130,246,0.82)";
+
 export default function MlbInGameAnalytics({
   team,
   season,
@@ -310,8 +312,8 @@ export default function MlbInGameAnalytics({
                     labelFormatter={(x) => `Game #${x}`}
                   />
                   <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                  <Bar dataKey="hits" name="hits" />
-                  <Bar dataKey="home_runs" name="home_runs" />
+                  <Bar dataKey="hits" name="hits" fill={INGAME_BAR_BLUE} />
+                  <Bar dataKey="home_runs" name="home_runs" fill="rgba(96,165,250,0.58)" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -396,8 +398,8 @@ export default function MlbInGameAnalytics({
                     labelFormatter={(x) => `Game #${x}`}
                   />
                   <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                  <Bar dataKey="walks" name="walks" />
-                  <Bar dataKey="strikeouts" name="strikeouts" />
+                  <Bar dataKey="walks" name="walks" fill={INGAME_BAR_BLUE} />
+                  <Bar dataKey="strikeouts" name="strikeouts" fill="rgba(96,165,250,0.58)" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -475,8 +477,8 @@ export default function MlbInGameAnalytics({
                     labelFormatter={(x) => `Game #${x}`}
                   />
                   <Legend wrapperStyle={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }} />
-                  <Bar dataKey="stolen_bases" name="stolen_bases" />
-                  <Bar dataKey="left_on_base" name="left_on_base" />
+                  <Bar dataKey="stolen_bases" name="stolen_bases" fill={INGAME_BAR_BLUE} />
+                  <Bar dataKey="left_on_base" name="left_on_base" fill="rgba(96,165,250,0.58)" />
                 </BarChart>
               </ResponsiveContainer>
             </div>

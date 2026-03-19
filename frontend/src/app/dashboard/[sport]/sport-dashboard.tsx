@@ -15,6 +15,8 @@ import {
   YAxis,
   Bar,
   BarChart,
+  Area,
+  AreaChart,
 } from "recharts";
 
 import { apiGet } from "@/lib/api";
@@ -418,6 +420,8 @@ export default function SportDashboard({ sport }: { sport: string }) {
   const marginRef = useRef<HTMLElement | null>(null);
   const closeGamesRef = useRef<HTMLElement | null>(null);
   const scoreDistributionRef = useRef<HTMLElement | null>(null);
+  const resultsBreakdownRef = useRef<HTMLElement | null>(null);
+  const cumulativeMarginRef = useRef<HTMLElement | null>(null);
 
   // Dropdown styles: readable options
   const selectClass =
@@ -618,6 +622,35 @@ export default function SportDashboard({ sport }: { sport: string }) {
     return histogram(margins, 7);
   }, [formSeries]);
 
+  const resultsBreakdown = useMemo(() => {
+    if (formSeries.length === 0) return [];
+    const counts = { W: 0, L: 0, T: 0 };
+    for (const g of formSeries) {
+      const key = (g.result || "").toUpperCase() as keyof typeof counts;
+      if (key in counts) counts[key] += 1;
+    }
+    return [
+      { outcome: "Wins", count: counts.W },
+      { outcome: "Losses", count: counts.L },
+      { outcome: "Ties", count: counts.T },
+    ].filter((row) => row.count > 0 || row.outcome !== "Ties");
+  }, [formSeries]);
+
+  const cumulativeMarginSeries = useMemo(() => {
+    if (formSeries.length === 0) return [];
+    let running = 0;
+    return formSeries.map((g) => {
+      running += g.margin ?? 0;
+      return {
+        idx: g.idx,
+        opponent: g.opponent,
+        result: g.result,
+        margin: g.margin,
+        cumulative_margin: running,
+      };
+    });
+  }, [formSeries]);
+
   // ---- AI summaries (small numeric objects only) ----
   const aiRecentFormSummary = useMemo(() => {
     if (formSeries.length === 0) return null;
@@ -803,6 +836,34 @@ const aiCloseGamesSummary = useMemo(() => {
     le7_losses: le7?.losses ?? 0,
   };
 }, [formSeries]);
+
+const aiResultsBreakdownSummary = useMemo(() => {
+  if (!resultsBreakdown.length) return null;
+  const wins = resultsBreakdown.find((r) => r.outcome === "Wins")?.count ?? 0;
+  const losses = resultsBreakdown.find((r) => r.outcome === "Losses")?.count ?? 0;
+  const ties = resultsBreakdown.find((r) => r.outcome === "Ties")?.count ?? 0;
+  return {
+    games: wins + losses + ties,
+    wins,
+    losses,
+    ties,
+    win_rate: wins + losses + ties > 0 ? wins / (wins + losses + ties) : null,
+  };
+}, [resultsBreakdown]);
+
+const aiCumulativeMarginSummary = useMemo(() => {
+  if (!cumulativeMarginSeries.length) return null;
+  const first = cumulativeMarginSeries[0]?.cumulative_margin ?? 0;
+  const last = cumulativeMarginSeries[cumulativeMarginSeries.length - 1]?.cumulative_margin ?? 0;
+  return {
+    games: cumulativeMarginSeries.length,
+    cumulative_margin_first: first,
+    cumulative_margin_last: last,
+    cumulative_margin_change: last - first,
+    best_single_margin: Math.max(...cumulativeMarginSeries.map((g) => g.margin ?? 0)),
+    worst_single_margin: Math.min(...cumulativeMarginSeries.map((g) => g.margin ?? 0)),
+  };
+}, [cumulativeMarginSeries]);
 
 const aiScoreDistributionSummary = useMemo(() => {
   if (!scoreDist || !scoreDist.bins?.length) return null;
@@ -1013,6 +1074,50 @@ const aiScoreDistributionSummary = useMemo(() => {
 
             {/* MAIN CONTENT */}
             <div className="flex-1">
+              {showInGame ? (
+                <div className="mb-6">
+                  {s === "nfl" ? (
+                    <NflInGameAnalytics
+                      sport={s}
+                      team={team}
+                      season={season}
+                      seasonType={seasonType}
+                      cardClass={cardClass}
+                    />
+                  ) : null}
+
+                  {s === "nba" ? (
+                    <NbaInGameAnalytics
+                      sport={s}
+                      team={team}
+                      season={season}
+                      seasonType={seasonType}
+                      cardClass={cardClass}
+                    />
+                  ) : null}
+
+                  {s === "nhl" ? (
+                    <NhlInGameAnalytics
+                      sport={s}
+                      team={team}
+                      season={season}
+                      seasonType={seasonType}
+                      cardClass={cardClass}
+                    />
+                  ) : null}
+
+                  {s === "mlb" ? (
+                    <MlbInGameAnalytics
+                      sport={s}
+                      team={team}
+                      season={season}
+                      seasonType={seasonType}
+                      cardClass={cardClass}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
+
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
                 {/* LEFT PLOTS COLUMN */}
                 <div className="lg:col-span-7 flex flex-col gap-6">
@@ -1227,49 +1332,6 @@ const aiScoreDistributionSummary = useMemo(() => {
                       />
                     ) : null}
                   </section>
-
-                  {/* NFL In-Game Analytics (toggle) */}
-                  {s === "nfl" && showInGame ? (
-                    <NflInGameAnalytics
-                      sport={s}
-                      team={team}
-                      season={season}
-                      seasonType={seasonType}
-                      cardClass={cardClass}
-                    />
-                  ) : null}
-
-
-                  {/* NBA In-Game Analytics (toggle) */}
-                  {s === "nba" && showInGame ? (
-                    <NbaInGameAnalytics
-                      sport={s}
-                      team={team}
-                      season={season}
-                      seasonType={seasonType}
-                      cardClass={cardClass}
-                    />
-                  ) : null}
-
-                  {s === "nhl" && showInGame ? (
-                    <NhlInGameAnalytics
-                      sport={s}
-                      team={team}
-                      season={season}
-                      seasonType={seasonType}
-                      cardClass={cardClass}
-                    />
-                  ) : null}
-
-                  {s === "mlb" && showInGame ? (
-                    <MlbInGameAnalytics
-                      sport={s}
-                      team={team}
-                      season={season}
-                      seasonType={seasonType}
-                      cardClass={cardClass}
-                    />
-                  ) : null}
 
                   {/* League Scoring Trend */}
                   <section ref={leagueScoringRef} className={cardClass}>
@@ -1719,6 +1781,40 @@ const aiScoreDistributionSummary = useMemo(() => {
 ) : null}
 
 </section>
+
+                  {/* Results Breakdown */}
+                  <section ref={resultsBreakdownRef} className={cardClass}>
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-base font-semibold">Results Breakdown</h2>
+                      <div className="text-xs text-white/60">{team}</div>
+                    </div>
+                    <PlotActions exportRef={resultsBreakdownRef} chartId="results_breakdown" chartTitle={`${team} Results Breakdown`} sport={s} season={season} seasonType={seasonType} team={team} summary={aiResultsBreakdownSummary} plotUrl={`/dashboard/${s}`} shareBody={`Sharing the ${team} results breakdown from the ${s.toUpperCase()} dashboard.`} />
+                    <div className="mt-4 h-[230px]">
+                      {resultsBreakdown.length === 0 ? (
+                        <div className="text-sm text-white/60">No result data available.</div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={resultsBreakdown} margin={{ top: 10, right: 10, bottom: 10, left: -10 }}>
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                            <XAxis dataKey="outcome" tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} axisLine={{ stroke: "rgba(255,255,255,0.15)" }} tickLine={{ stroke: "rgba(255,255,255,0.15)" }} />
+                            <YAxis tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }} axisLine={{ stroke: "rgba(255,255,255,0.15)" }} tickLine={{ stroke: "rgba(255,255,255,0.15)" }} allowDecimals={false} />
+                            <Tooltip contentStyle={{ background: "rgba(0,0,0,0.9)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 12, color: "white" }} />
+                            <Bar dataKey="count" name="Games" fill="rgba(59,130,246,0.82)" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                    {aiResultsBreakdownSummary ? (
+                      <AIInsightsBox
+                        chartId="results_breakdown"
+                        sport={s}
+                        season={season}
+                        seasonType={seasonType}
+                        team={team}
+                        summary={aiResultsBreakdownSummary}
+                      />
+                    ) : null}
+                  </section>
 
                   {/* Margin Histogram */}
                   <section ref={marginRef} className={cardClass}>
