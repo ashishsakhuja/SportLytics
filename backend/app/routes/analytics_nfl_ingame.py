@@ -13,6 +13,29 @@ from app.models import Game, TeamGameStats
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
+NFL_TEAM_ALIASES = {
+    "WAS": "WAS",
+    "WSH": "WAS",
+}
+
+
+def _normalize_nfl_team_code(team_code: str) -> str:
+    code = (team_code or "").upper().strip()
+    return NFL_TEAM_ALIASES.get(code, code)
+
+
+def _team_code_variants(team_code: str) -> List[str]:
+    normalized = _normalize_nfl_team_code(team_code)
+    if normalized == "WAS":
+        return ["WAS", "WSH"]
+    return [normalized]
+
+
+def _display_nfl_team_code(team_code: Optional[str]) -> str:
+    return _normalize_nfl_team_code(team_code or "")
+
+
+
 def _finalish_filter():
     return sa.and_(
         Game.home_score.isnot(None),
@@ -79,7 +102,8 @@ def nfl_in_game_summary(
     db: Session = Depends(get_db),
 ):
     sport = "nfl"
-    team_code = (team_code or "").upper().strip()
+    team_code = _normalize_nfl_team_code(team_code)
+    team_code_variants = _team_code_variants(team_code)
     season_type = (season_type or "").upper().strip()
     if season_type not in {"REG", "POST"}:
         raise HTTPException(status_code=400, detail="season_type must be REG or POST")
@@ -92,7 +116,7 @@ def nfl_in_game_summary(
             Game.season == season,
             Game.season_type == season_type,
             _finalish_filter(),
-            TeamGameStats.team_code == team_code,
+            TeamGameStats.team_code.in_(team_code_variants),
         )
         .order_by(Game.game_date.desc().nullslast(), Game.id.desc())
         .limit(last)
@@ -122,8 +146,10 @@ def nfl_in_game_summary(
     ypp_vals: List[Optional[float]] = []
 
     for idx, (g, tgs) in enumerate(rows, start=1):
-        is_home = (g.home_team_code or "").upper() == team_code
-        opp = (g.away_team_code if is_home else g.home_team_code) or ""
+        game_home = _normalize_nfl_team_code(g.home_team_code or "")
+        game_away = _normalize_nfl_team_code(g.away_team_code or "")
+        is_home = game_home == team_code
+        opp = game_away if is_home else game_home
 
         pf = g.home_score if is_home else g.away_score
         pa = g.away_score if is_home else g.home_score
@@ -218,7 +244,7 @@ def nfl_in_game_summary(
             {
                 "idx": idx,
                 "date": g.game_date.date().isoformat() if g.game_date else None,
-                "opponent": (opp or "").upper(),
+                "opponent": _display_nfl_team_code(opp),
                 "home_away": "home" if is_home else "away",
                 "result": result,
                 "pf": pf,

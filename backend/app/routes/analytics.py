@@ -26,6 +26,21 @@ def _norm_sport(s: str) -> str:
     return s
 
 
+
+
+def _canonical_team_code(sport: str, code: str) -> str:
+    c = (code or "").upper().strip()
+    if sport == "nfl":
+        return {"WSH": "WAS"}.get(c, c)
+    return c
+
+
+def _team_code_variants(sport: str, code: str) -> list[str]:
+    c = _canonical_team_code(sport, code)
+    if sport == "nfl" and c == "WAS":
+        return ["WAS", "WSH"]
+    return [c]
+
 def _finalish_filter():
     """
     ESPN providers typically use: pre / in / final
@@ -50,18 +65,33 @@ def list_teams(
         .order_by(Team.team_code.asc())
         .all()
     )
+
+    deduped: dict[str, Team] = {}
+    for t in rows:
+        canonical = _canonical_team_code(sport, t.team_code)
+        existing = deduped.get(canonical)
+        if existing is None:
+            deduped[canonical] = t
+            continue
+        existing_score = 0 if existing.name == existing.team_code else 1
+        current_score = 0 if t.name == t.team_code else 1
+        if current_score > existing_score:
+            deduped[canonical] = t
+
+    teams = [
+        {
+            "team_code": canonical,
+            "name": (t.name if t.name and t.name != t.team_code else canonical),
+            "city": t.city,
+            "meta": t.meta,
+        }
+        for canonical, t in sorted(deduped.items(), key=lambda item: item[0])
+    ]
+
     return {
         "sport": sport,
-        "count": len(rows),
-        "teams": [
-            {
-                "team_code": t.team_code,
-                "name": t.name,
-                "city": t.city,
-                "meta": t.meta,
-            }
-            for t in rows
-        ],
+        "count": len(teams),
+        "teams": teams,
     }
 
 
@@ -402,7 +432,8 @@ def team_form(
     dates, opponents, home_away, score_for, score_against, margin, result
     """
     sport = _norm_sport(sport)
-    team_code = team_code.upper().strip()
+    team_code = _canonical_team_code(sport, team_code)
+    team_variants = _team_code_variants(sport, team_code)
     season_type = season_type.upper().strip()
 
     games = (
@@ -411,7 +442,7 @@ def team_form(
             Game.sport == sport,
             Game.season == season,
             Game.season_type == season_type,
-            sa.or_(Game.home_team_code == team_code, Game.away_team_code == team_code),
+            sa.or_(Game.home_team_code.in_(team_variants), Game.away_team_code.in_(team_variants)),
             Game.game_date.isnot(None),
         )
         .order_by(Game.game_date.desc())
@@ -434,7 +465,7 @@ def team_form(
     source_urls = []
 
     for g in games:
-        is_home = g.home_team_code == team_code
+        is_home = (g.home_team_code or "").upper() in team_variants
         opp = g.away_team_code if is_home else g.home_team_code
 
         sf = g.home_score if is_home else g.away_score
@@ -485,7 +516,8 @@ def team_splits_home_away(
     GP/W/L/T + avg PF/PA/margin for home and away.
     """
     sport = _norm_sport(sport)
-    team_code = team_code.upper().strip()
+    team_code = _canonical_team_code(sport, team_code)
+    team_variants = _team_code_variants(sport, team_code)
     season_type = season_type.upper().strip()
 
     games = (
@@ -494,7 +526,7 @@ def team_splits_home_away(
             Game.sport == sport,
             Game.season == season,
             Game.season_type == season_type,
-            sa.or_(Game.home_team_code == team_code, Game.away_team_code == team_code),
+            sa.or_(Game.home_team_code.in_(team_variants), Game.away_team_code.in_(team_variants)),
             Game.game_date.isnot(None),
             _finalish_filter(),
         )
@@ -503,7 +535,7 @@ def team_splits_home_away(
     )
 
     def _bucket(is_home: bool):
-        bucket_games = [g for g in games if (g.home_team_code == team_code) == is_home]
+        bucket_games = [g for g in games if (((g.home_team_code or "").upper() in team_variants) == is_home)]
         gp = len(bucket_games)
         w = l = t_ = 0
         pf = pa = 0

@@ -11,6 +11,17 @@ from app.models import Game, StandingsSnapshot
 router = APIRouter(prefix="/dashboards/nfl", tags=["dashboards:nfl"])
 
 
+def _canonical_nfl_team_code(code: str) -> str:
+    c = (code or "").upper().strip()
+    return {"WSH": "WAS"}.get(c, c)
+
+
+def _nfl_team_variants(code: str) -> list[str]:
+    c = _canonical_nfl_team_code(code)
+    return ["WAS", "WSH"] if c == "WAS" else [c]
+
+
+
 @router.get("/standings")
 def get_standings(
     season: int = Query(...),
@@ -80,7 +91,8 @@ def team_form(
 ):
     """Return chart-ready arrays for a team's last N games in the given season."""
 
-    team_code = team_code.upper().strip()
+    team_code = _canonical_nfl_team_code(team_code)
+    team_variants = _nfl_team_variants(team_code)
     season_type = season_type.upper().strip()
 
     games = (
@@ -89,7 +101,7 @@ def team_form(
             Game.sport == "nfl",
             Game.season == season,
             Game.season_type == season_type,
-            sa.or_(Game.home_team_code == team_code, Game.away_team_code == team_code),
+            sa.or_(Game.home_team_code.in_(team_variants), Game.away_team_code.in_(team_variants)),
             Game.game_date.isnot(None),
         )
         .order_by(Game.game_date.desc())
@@ -112,7 +124,7 @@ def team_form(
     source_urls = []
 
     for g in games:
-        is_home = g.home_team_code == team_code
+        is_home = (g.home_team_code or "").upper() in team_variants
         opp = g.away_team_code if is_home else g.home_team_code
 
         pf = g.home_score if is_home else g.away_score
