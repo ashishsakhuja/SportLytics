@@ -14,4 +14,4 @@ sa
 openai
 python-dotenv
 redis
-
+stripe

@@ -290,3 +290,37 @@ class AuthSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class PremiumSubscription(Base):
+    __tablename__ = "premium_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+
+    plan_code: Mapped[str] = mapped_column(String(40), default="pulse_premium_monthly")
+    status: Mapped[str] = mapped_column(String(30), default="inactive", index=True)
+    access_source: Mapped[str] = mapped_column(String(20), default="stripe", index=True)  # stripe/admin
+
+    price_cents: Mapped[int] = mapped_column(Integer, default=499)
+    currency: Mapped[str] = mapped_column(String(8), default="usd")
+
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    stripe_checkout_session_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+def premium_is_active(sub: PremiumSubscription | None) -> bool:
+    if not sub:
+        return False
+    if sub.status in {"active", "trialing", "complimentary"}:
+        return True
+    return False

@@ -20,6 +20,7 @@ from app.routes.analytics_mlb_ingame import router as analytics_mlb_ingame_route
 from app.routes.analytics_custom import router as analytics_custom_router
 from app.routes.community import router as community_router
 from app.routes.auth import router as auth_router
+from app.routes.billing import router as billing_router
 
 app = FastAPI(title="SportsHub API")
 
@@ -51,3 +52,5 @@ app.include_router(analytics_mlb_ingame_router)
 app.include_router(analytics_custom_router)
 app.include_router(community_router)
 app.include_router(auth_router)
+
+app.include_router(billing_router)

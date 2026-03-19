@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { apiGet, apiPost } from "@/lib/api";
 import Sparkline from "@/components/Sparkline";
-import { clearAuthSession, getStoredUser, type AuthUser } from "@/lib/auth";
+import { clearAuthSession, getAuthToken, getStoredUser, setStoredUser, type AuthUser } from "@/lib/auth";
 
 type NewsItem = {
   id: number;
@@ -222,7 +222,21 @@ export default function GeneralDashboard() {
   }, []);
 
   useEffect(() => {
-    setAuthUser(getStoredUser());
+    const stored = getStoredUser();
+    setAuthUser(stored);
+
+    if (stored) {
+      apiGet<{ authenticated: boolean; user: AuthUser | null }>("/auth/me")
+        .then((res) => {
+          if (res.authenticated && res.user) {
+            setAuthUser(res.user);
+            setStoredUser(res.user);
+          }
+        })
+        .catch(() => {
+          // silent refresh only
+        });
+    }
 
     const onStorage = () => {
       setAuthUser(getStoredUser());
@@ -235,7 +249,7 @@ export default function GeneralDashboard() {
   async function handleSignOut() {
     setAuthBusy(true);
     try {
-      await apiPost("/auth/logout", {});
+      await apiPost("/auth/logout", { token: getAuthToken() ?? "" });
     } catch {
       // clear local session even if backend logout fails
     } finally {
@@ -524,6 +538,13 @@ export default function GeneralDashboard() {
               className="rounded-full px-4 py-2 text-xs font-semibold border border-cyan-400/30 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/15 transition"
             >
               Community →
+            </Link>
+
+            <Link
+              href={authUser ? "/dashboard/premium" : "/auth/sign-in?returnTo=%2Fdashboard%2Fpremium"}
+              className={`rounded-full px-4 py-2 text-xs font-semibold border transition ${authUser?.is_premium ? "border-emerald-400/35 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/20" : "border-amber-400/30 bg-amber-500/10 text-amber-100 hover:bg-amber-500/15"}`}
+            >
+              {authUser?.is_premium ? "Pulse Premium ✓" : "Pulse Premium →"}
             </Link>
           </div>
 

@@ -17,6 +17,7 @@ from app.auth import (
     verify_password,
 )
 from app.models import AuthSession, UserAccount
+from app.routes.billing import get_user_premium_payload
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -64,6 +65,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
             "id": user.id,
             "email": user.email,
             "display_name": user.display_name,
+            **get_user_premium_payload(db, user),
         },
     }
 
@@ -90,12 +92,13 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             "id": user.id,
             "email": user.email,
             "display_name": user.display_name,
+            **get_user_premium_payload(db, user),
         },
     }
 
 
 @router.get("/me")
-def me(user: UserAccount | None = Depends(get_current_user_optional)):
+def me(user: UserAccount | None = Depends(get_current_user_optional), db: Session = Depends(get_db)):
     if not user:
         return {"authenticated": False, "user": None}
     return {
@@ -104,6 +107,7 @@ def me(user: UserAccount | None = Depends(get_current_user_optional)):
             "id": user.id,
             "email": user.email,
             "display_name": user.display_name,
+            **get_user_premium_payload(db, user),
         },
     }
 

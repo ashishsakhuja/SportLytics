@@ -2,6 +2,12 @@ export type AuthUser = {
   id: number;
   email: string;
   display_name: string;
+  is_premium?: boolean;
+  plan_code?: string | null;
+  status?: string | null;
+  access_source?: string | null;
+  current_period_end?: string | null;
+  cancel_at_period_end?: boolean;
 };
 
 const TOKEN_KEY = "sportlytics.auth.token";
@@ -21,6 +27,11 @@ export function getStoredUser(): AuthUser | null {
   } catch {
     return null;
   }
+}
+
+export function setStoredUser(user: AuthUser) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
 export function setAuthSession(token: string, user: AuthUser) {
