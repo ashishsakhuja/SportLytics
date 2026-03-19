@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
+import { getStoredUser, type AuthUser } from "@/lib/auth";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE;
 
 type SportKey = "nfl" | "nba" | "mlb" | "nhl";
 
@@ -127,29 +128,15 @@ function Select({
   );
 }
 
-async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  if (!API_BASE) {
-    throw new Error("Missing NEXT_PUBLIC_API_BASE in .env.local");
-  }
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`POST ${path} failed: ${res.status} ${text}`);
-  }
-  return res.json() as Promise<T>;
-}
-
 export default function SignalCenterPage() {
+  const router = useRouter();
+
   const [sport, setSport] = useState<SportKey>("nfl");
   const [season, setSeason] = useState("2025");
   const [seasonType, setSeasonType] = useState("REG");
   const [team, setTeam] = useState("all");
 
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [teams, setTeams] = useState<TeamRow[]>([]);
   const [storylines, setStorylines] = useState<Storyline[]>([]);
   const [storyLoading, setStoryLoading] = useState(false);
@@ -166,6 +153,13 @@ export default function SignalCenterPage() {
         "I’m Pulse, your SportLytics signal assistant. Ask about recent movers, team comparisons, offense, defense, or home-away splits.",
     },
   ]);
+
+  useEffect(() => {
+    setAuthUser(getStoredUser());
+    const onStorage = () => setAuthUser(getStoredUser());
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   useEffect(() => {
     async function loadTeams() {
@@ -209,9 +203,19 @@ export default function SignalCenterPage() {
     return match ? `${match.city ? `${match.city} ` : ""}${match.name}` : team;
   }, [team, teams]);
 
+  function promptSignIn() {
+    router.push(`/auth/sign-in?returnTo=${encodeURIComponent("/dashboard/signal-center")}`);
+  }
+
   async function submitQuestion(question: string) {
     const trimmed = question.trim();
     if (!trimmed) return;
+
+    if (!authUser) {
+      promptSignIn();
+      return;
+    }
+
     setChatError(null);
     setChatLoading(true);
     setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text: trimmed }]);
@@ -240,7 +244,12 @@ export default function SignalCenterPage() {
         setStorylines(resp.storylines);
       }
     } catch (e: any) {
-      setChatError(e?.message ?? "Failed to get an answer from Pulse.");
+      const message = String(e?.message ?? "Failed to get an answer from Pulse.");
+      if (message.includes("401") || message.toLowerCase().includes("sign in required")) {
+        promptSignIn();
+        return;
+      }
+      setChatError(message);
     } finally {
       setChatLoading(false);
     }
@@ -323,6 +332,28 @@ export default function SignalCenterPage() {
                     </div>
                   </div>
                 </div>
+
+                {!authUser ? (
+                  <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-cyan-100">Sign in to use Pulse</div>
+                      <div className="mt-1 text-sm text-cyan-50/80">
+                        Signal Center storylines stay visible to everyone, but sending Pulse prompts now requires an account.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={promptSignIn}
+                      className="rounded-2xl border border-cyan-300/35 bg-cyan-500/15 px-4 py-2.5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/20"
+                    >
+                      Sign in to ask Pulse
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
+                    Signed in as <span className="font-semibold">{authUser.display_name}</span>. Pulse queries are unlocked.
+                  </div>
+                )}
 
                 <div className="mt-4 flex flex-wrap gap-2">
                   {SUGGESTED[sport].map((prompt) => (
@@ -408,7 +439,7 @@ export default function SignalCenterPage() {
                     disabled={chatLoading || !input.trim()}
                     className="rounded-2xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-5 py-3 text-sm font-semibold text-fuchsia-100 transition hover:bg-fuchsia-500/15 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Send to Pulse
+                    {authUser ? "Send to Pulse" : "Sign in to ask"}
                   </button>
                 </div>
               </div>

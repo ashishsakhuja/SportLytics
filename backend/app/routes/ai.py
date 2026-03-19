@@ -2,7 +2,9 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.auth import get_current_user_required
 from app.db import get_db
+from app.models import UserAccount
 from app.services.ai_insights_service import answer_query, build_storylines
 from app.services.ai_service import generate_chart_answer_cached, generate_chart_caption_cached
 
@@ -94,7 +96,11 @@ def get_storylines(
 
 
 @router.post("/query")
-def query_ai(data: QueryRequest, db: Session = Depends(get_db)):
+def query_ai(
+    data: QueryRequest,
+    current_user: UserAccount = Depends(get_current_user_required),
+    db: Session = Depends(get_db),
+):
     result = answer_query(
         db,
         sport=data.sport,
@@ -103,4 +109,11 @@ def query_ai(data: QueryRequest, db: Session = Depends(get_db)):
         team_code=data.team,
         question=data.question,
     )
-    return result
+    return {
+        **result,
+        "user": {
+            "id": current_user.id,
+            "email": current_user.email,
+            "display_name": current_user.display_name,
+        },
+    }
