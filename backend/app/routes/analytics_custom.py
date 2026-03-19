@@ -16,6 +16,34 @@ router = APIRouter(prefix="/analytics/custom", tags=["analytics-custom"])
 SUPPORTED_DATA_SPORTS = {"nfl", "nba", "mlb", "nhl"}
 MAX_OVERLAY_TEAMS = 5
 
+_ALLOWED_TEAM_CODES = {
+    "nfl": {
+        "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE",
+        "DAL", "DEN", "DET", "GB", "HOU", "IND", "JAX", "KC",
+        "LAC", "LAR", "LV", "MIA", "MIN", "NE", "NO", "NYG",
+        "NYJ", "PHI", "PIT", "SEA", "SF", "TB", "TEN", "WAS", "WSH",
+    },
+    "nba": {
+        "ATL", "BKN", "BOS", "CHA", "CHI", "CLE", "DAL", "DEN", "DET", "GS", "HOU", "IND",
+        "LAC", "LAL", "MEM", "MIA", "MIL", "MIN", "NO", "NY", "OKC", "ORL", "PHI", "PHX",
+        "POR", "SAC", "SA", "TOR", "UTA", "WSH",
+    },
+    "mlb": {
+        "ARI", "ATL", "BAL", "BOS", "CHC", "CHW", "CIN", "CLE", "COL", "DET", "HOU", "KC",
+        "LAA", "LAD", "MIA", "MIL", "MIN", "NYM", "NYY", "ATH", "PHI", "PIT", "SD", "SEA",
+        "SF", "STL", "TB", "TEX", "TOR", "WSH",
+    },
+    "nhl": {
+        "ANA", "BOS", "BUF", "CAR", "CBJ", "CGY", "CHI", "COL", "DAL", "DET", "EDM", "FLA",
+        "LA", "MIN", "MTL", "NJD", "NSH", "NYI", "NYR", "OTT", "PHI", "PIT", "SEA", "SJ",
+        "STL", "TB", "TOR", "UTA", "VAN", "VGK", "WPG", "WSH",
+    },
+}
+
+
+def _allowed_team_codes_for_sport(sport: str) -> set[str]:
+    return set(_ALLOWED_TEAM_CODES.get((sport or "").lower().strip(), set()))
+
 BUILT_IN_METRICS = [
     {"key": "score_for", "label": "Score For", "source": "built_in", "group": "Core"},
     {"key": "score_against", "label": "Score Against", "source": "built_in", "group": "Core"},
@@ -73,21 +101,6 @@ def _norm_sport(s: str) -> str:
     return s
 
 
-
-
-
-def _canonical_team_code(sport: str, code: str) -> str:
-    c = (code or "").upper().strip()
-    if sport == "nfl":
-        return {"WSH": "WAS"}.get(c, c)
-    return c
-
-
-def _team_code_variants(sport: str, code: str) -> List[str]:
-    c = _canonical_team_code(sport, code)
-    if sport == "nfl" and c == "WAS":
-        return ["WAS", "WSH"]
-    return [c]
 
 def _norm_season_type(s: str) -> str:
     s = (s or "REG").upper().strip()
@@ -198,10 +211,9 @@ def _discover_metric_keys(db: Session, sport: str, season: int, season_type: str
 
 
 
-def _metric_value(metric: str, team_code: str, game: Game, stats: Optional[Dict[str, Any]], *, sport: str = "") -> Optional[float]:
-    team_code = _canonical_team_code(sport, team_code) if sport else (team_code or "").upper().strip()
-    team_variants = _team_code_variants(sport, team_code) if sport else [team_code]
-    is_home = (game.home_team_code or "").upper() in team_variants
+def _metric_value(metric: str, team_code: str, game: Game, stats: Optional[Dict[str, Any]]) -> Optional[float]:
+    team_code = (team_code or "").upper().strip()
+    is_home = (game.home_team_code or "").upper() == team_code
     pf = game.home_score if is_home else game.away_score
     pa = game.away_score if is_home else game.home_score
 
@@ -248,11 +260,11 @@ def _safe_series_key(prefix: str, value: str) -> str:
 
 
 
-def _parse_team_list(primary_team: str, overlay_teams: Optional[str], *, sport: str) -> List[str]:
+def _parse_team_list(primary_team: str, overlay_teams: Optional[str]) -> List[str]:
     out: List[str] = []
     seen = set()
     for raw in [primary_team, *(((overlay_teams or "").split(",")) if overlay_teams else [])]:
-        t = _canonical_team_code(sport, raw)
+        t = (raw or "").upper().strip()
         if not t or t in seen:
             continue
         seen.add(t)
@@ -285,8 +297,6 @@ def _rows_for_team_metric(
     result: str,
 ) -> List[Dict[str, Any]]:
     seasons = _season_range(season_from, season_to)
-    team_code = _canonical_team_code(sport, team_code)
-    team_variants = _team_code_variants(sport, team_code)
 
     rows = (
         db.query(Game, TeamGameStats)
@@ -294,7 +304,7 @@ def _rows_for_team_metric(
             TeamGameStats,
             sa.and_(
                 TeamGameStats.game_id == Game.id,
-                TeamGameStats.team_code.in_(team_variants),
+                TeamGameStats.team_code == team_code,
                 TeamGameStats.sport == sport,
             ),
         )
@@ -303,7 +313,7 @@ def _rows_for_team_metric(
             Game.season.in_(seasons),
             Game.season_type == season_type,
             _finalish_filter(),
-            sa.or_(Game.home_team_code.in_(team_variants), Game.away_team_code.in_(team_variants)),
+            sa.or_(Game.home_team_code == team_code, Game.away_team_code == team_code),
         )
         .order_by(Game.season.asc(), Game.game_date.asc().nullslast(), Game.id.asc())
         .all()
@@ -311,7 +321,7 @@ def _rows_for_team_metric(
 
     out: List[Dict[str, Any]] = []
     for idx, (g, tgs) in enumerate(rows, start=1):
-        is_home = (g.home_team_code or "").upper() in team_variants
+        is_home = (g.home_team_code or "").upper() == team_code
         opp = (g.away_team_code if is_home else g.home_team_code) or ""
         pf = g.home_score if is_home else g.away_score
         pa = g.away_score if is_home else g.home_score
@@ -325,7 +335,7 @@ def _rows_for_team_metric(
             else:
                 result_label = "T"
 
-        value = _metric_value(metric, team_code, g, tgs.stats if tgs else None, sport=sport)
+        value = _metric_value(metric, team_code, g, tgs.stats if tgs else None)
         row = {
             "idx": idx,
             "season": g.season,
@@ -376,7 +386,7 @@ def _rows_for_league_average(
         if g.season is None:
             continue
         team_code = (tgs.team_code or "").upper()
-        value = _metric_value(metric, team_code, g, tgs.stats if tgs else None, sport=sport)
+        value = _metric_value(metric, team_code, g, tgs.stats if tgs else None)
         if value is not None:
             season_vals[int(g.season)].append(float(value))
 
@@ -548,6 +558,9 @@ def custom_builder_options(
     season_type = _norm_season_type(season_type)
 
     teams = db.query(Team).filter(Team.sport == sport).order_by(Team.team_code.asc()).all()
+    allowed = _allowed_team_codes_for_sport(sport)
+    if allowed:
+        teams = [t for t in teams if (t.team_code or "").upper().strip() in allowed] or teams
     metrics = _discover_metric_keys(db, sport, season, season_type)
 
     return {

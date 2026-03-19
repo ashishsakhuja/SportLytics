@@ -15,6 +15,42 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 SUPPORTED_DATA_SPORTS = {"nfl", "nba", "mlb", "nhl"}
 POINTS_LABEL = {"nfl": "points", "nba": "points", "mlb": "runs", "nhl": "goals"}
 
+_ALLOWED_TEAM_CODES = {
+    "nfl": {
+        "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE",
+        "DAL", "DEN", "DET", "GB", "HOU", "IND", "JAX", "KC",
+        "LAC", "LAR", "LV", "MIA", "MIN", "NE", "NO", "NYG",
+        "NYJ", "PHI", "PIT", "SEA", "SF", "TB", "TEN", "WAS", "WSH",
+    },
+    "nba": {
+        "ATL", "BKN", "BOS", "CHA", "CHI", "CLE", "DAL", "DEN", "DET", "GS", "HOU", "IND",
+        "LAC", "LAL", "MEM", "MIA", "MIL", "MIN", "NO", "NY", "OKC", "ORL", "PHI", "PHX",
+        "POR", "SAC", "SA", "TOR", "UTA", "WSH",
+    },
+    "mlb": {
+        "ARI", "ATL", "BAL", "BOS", "CHC", "CHW", "CIN", "CLE", "COL", "DET", "HOU", "KC",
+        "LAA", "LAD", "MIA", "MIL", "MIN", "NYM", "NYY", "ATH", "PHI", "PIT", "SD", "SEA",
+        "SF", "STL", "TB", "TEX", "TOR", "WSH",
+    },
+    "nhl": {
+        "ANA", "BOS", "BUF", "CAR", "CBJ", "CGY", "CHI", "COL", "DAL", "DET", "EDM", "FLA",
+        "LA", "MIN", "MTL", "NJD", "NSH", "NYI", "NYR", "OTT", "PHI", "PIT", "SEA", "SJ",
+        "STL", "TB", "TOR", "UTA", "VAN", "VGK", "WPG", "WSH",
+    },
+}
+
+
+def _allowed_team_codes_for_sport(sport: str) -> set[str]:
+    return set(_ALLOWED_TEAM_CODES.get((sport or "").lower().strip(), set()))
+
+
+def _filter_real_teams(sport: str, rows: list[Team]) -> list[Team]:
+    allowed = _allowed_team_codes_for_sport(sport)
+    if not allowed:
+        return rows
+    filtered = [t for t in rows if (t.team_code or "").upper().strip() in allowed]
+    return filtered or rows
+
 
 def _norm_sport(s: str) -> str:
     s = (s or "").lower().strip()
@@ -25,21 +61,6 @@ def _norm_sport(s: str) -> str:
         )
     return s
 
-
-
-
-def _canonical_team_code(sport: str, code: str) -> str:
-    c = (code or "").upper().strip()
-    if sport == "nfl":
-        return {"WSH": "WAS"}.get(c, c)
-    return c
-
-
-def _team_code_variants(sport: str, code: str) -> list[str]:
-    c = _canonical_team_code(sport, code)
-    if sport == "nfl" and c == "WAS":
-        return ["WAS", "WSH"]
-    return [c]
 
 def _finalish_filter():
     """
@@ -65,33 +86,19 @@ def list_teams(
         .order_by(Team.team_code.asc())
         .all()
     )
-
-    deduped: dict[str, Team] = {}
-    for t in rows:
-        canonical = _canonical_team_code(sport, t.team_code)
-        existing = deduped.get(canonical)
-        if existing is None:
-            deduped[canonical] = t
-            continue
-        existing_score = 0 if existing.name == existing.team_code else 1
-        current_score = 0 if t.name == t.team_code else 1
-        if current_score > existing_score:
-            deduped[canonical] = t
-
-    teams = [
-        {
-            "team_code": canonical,
-            "name": (t.name if t.name and t.name != t.team_code else canonical),
-            "city": t.city,
-            "meta": t.meta,
-        }
-        for canonical, t in sorted(deduped.items(), key=lambda item: item[0])
-    ]
-
+    rows = _filter_real_teams(sport, rows)
     return {
         "sport": sport,
-        "count": len(teams),
-        "teams": teams,
+        "count": len(rows),
+        "teams": [
+            {
+                "team_code": t.team_code,
+                "name": t.name,
+                "city": t.city,
+                "meta": t.meta,
+            }
+            for t in rows
+        ],
     }
 
 
@@ -432,8 +439,7 @@ def team_form(
     dates, opponents, home_away, score_for, score_against, margin, result
     """
     sport = _norm_sport(sport)
-    team_code = _canonical_team_code(sport, team_code)
-    team_variants = _team_code_variants(sport, team_code)
+    team_code = team_code.upper().strip()
     season_type = season_type.upper().strip()
 
     games = (
@@ -442,7 +448,7 @@ def team_form(
             Game.sport == sport,
             Game.season == season,
             Game.season_type == season_type,
-            sa.or_(Game.home_team_code.in_(team_variants), Game.away_team_code.in_(team_variants)),
+            sa.or_(Game.home_team_code == team_code, Game.away_team_code == team_code),
             Game.game_date.isnot(None),
         )
         .order_by(Game.game_date.desc())
@@ -465,7 +471,7 @@ def team_form(
     source_urls = []
 
     for g in games:
-        is_home = (g.home_team_code or "").upper() in team_variants
+        is_home = g.home_team_code == team_code
         opp = g.away_team_code if is_home else g.home_team_code
 
         sf = g.home_score if is_home else g.away_score
@@ -516,8 +522,7 @@ def team_splits_home_away(
     GP/W/L/T + avg PF/PA/margin for home and away.
     """
     sport = _norm_sport(sport)
-    team_code = _canonical_team_code(sport, team_code)
-    team_variants = _team_code_variants(sport, team_code)
+    team_code = team_code.upper().strip()
     season_type = season_type.upper().strip()
 
     games = (
@@ -526,7 +531,7 @@ def team_splits_home_away(
             Game.sport == sport,
             Game.season == season,
             Game.season_type == season_type,
-            sa.or_(Game.home_team_code.in_(team_variants), Game.away_team_code.in_(team_variants)),
+            sa.or_(Game.home_team_code == team_code, Game.away_team_code == team_code),
             Game.game_date.isnot(None),
             _finalish_filter(),
         )
@@ -535,7 +540,7 @@ def team_splits_home_away(
     )
 
     def _bucket(is_home: bool):
-        bucket_games = [g for g in games if (((g.home_team_code or "").upper() in team_variants) == is_home)]
+        bucket_games = [g for g in games if (g.home_team_code == team_code) == is_home]
         gp = len(bucket_games)
         w = l = t_ = 0
         pf = pa = 0
