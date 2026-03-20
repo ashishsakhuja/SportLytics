@@ -250,7 +250,8 @@ def answer_query(
     team_code: Optional[str] = None,
 ) -> Dict[str, Any]:
     sport = normalize_sport(sport)
-    season_type = normalize_season_type(season_type)
+    base_season = int(season)
+    base_season_type = normalize_season_type(season_type)
     team_code = (team_code or "").upper().strip() or None
     question = (question or "").strip()
 
@@ -263,8 +264,18 @@ def answer_query(
             "route": None,
         }
 
+    pre_route = route_query(
+        question=question,
+        known_codes=set(),
+        team_filter=team_code,
+        default_season=base_season,
+        default_season_type=base_season_type,
+    )
+    resolved_season = int(pre_route.get("requested_season") or base_season)
+    resolved_season_type = normalize_season_type(pre_route.get("requested_season_type") or base_season_type)
+
     question_key = _stable_hash(question.lower())
-    cache_key = f"ai:query:v3:{sport}:{season}:{season_type}:{team_code or 'all'}:{question_key}"
+    cache_key = f"ai:query:v4:{sport}:{resolved_season}:{resolved_season_type}:{team_code or 'all'}:{question_key}"
     cached = _cache_get(cache_key)
     if cached:
         try:
@@ -275,8 +286,8 @@ def answer_query(
     summaries = compute_league_trend_summaries(
         db,
         sport=sport,
-        season=season,
-        season_type=season_type,
+        season=resolved_season,
+        season_type=resolved_season_type,
         team_code=team_code,
     )
     if not summaries:
@@ -285,11 +296,26 @@ def answer_query(
             "answer": "Not enough data yet.",
             "supporting_items": [],
             "storylines": [],
-            "route": None,
+            "route": {
+                **pre_route,
+                "resolved_season": resolved_season,
+                "resolved_season_type": resolved_season_type,
+                "team_filter": team_code,
+            },
         }
 
     known_codes = {s["team_code"] for s in summaries}
-    route = route_query(question=question, known_codes=known_codes, team_filter=team_code)
+    route = route_query(
+        question=question,
+        known_codes=known_codes,
+        team_filter=team_code,
+        default_season=resolved_season,
+        default_season_type=resolved_season_type,
+    )
+    route["resolved_season"] = resolved_season
+    route["resolved_season_type"] = resolved_season_type
+    route["team_filter"] = team_code
+
     context = _build_query_context(summaries, route=route)
     items = context.get("items") or []
 
@@ -319,8 +345,8 @@ def answer_query(
         direct = compute_team_trend_summary(
             db,
             sport=sport,
-            season=season,
-            season_type=season_type,
+            season=resolved_season,
+            season_type=resolved_season_type,
             team_code=route["teams"][0],
         )
         if direct:
@@ -330,8 +356,8 @@ def answer_query(
     storylines = build_storylines(
         db,
         sport=sport,
-        season=season,
-        season_type=season_type,
+        season=resolved_season,
+        season_type=resolved_season_type,
         team_code=team_code,
         limit=4,
     )
@@ -342,8 +368,8 @@ def answer_query(
     answer = rewrite_grounded_pulse_answer(
         question=question,
         sport=sport,
-        season=season,
-        season_type=season_type,
+        season=resolved_season,
+        season_type=resolved_season_type,
         route=route,
         items=items,
         deterministic_answer=answer,

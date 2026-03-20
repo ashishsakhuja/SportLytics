@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.services.team_aliases import TEAM_ALIASES
@@ -134,7 +135,9 @@ SPORTS_INTENT_TERMS = {
     "losses",
 }
 
-THRESHOLD_PATTERN = re.compile(r"\b(over|under|more than|less than|at least|at most)\s+(\d+(?:\.\d+)?)\b")
+THRESHOLD_PATTERN = re.compile(r"(over|under|more than|less than|at least|at most)\s+(\d+(?:\.\d+)?)")
+YEAR_PATTERN = re.compile(r"(20\d{2})")
+CURRENT_YEAR = datetime.now().year
 
 
 def extract_team_codes(question: str, known_codes: set[str]) -> List[str]:
@@ -158,6 +161,37 @@ def extract_team_codes(question: str, known_codes: set[str]) -> List[str]:
             found.append(code)
 
     return found[:4]
+
+
+def extract_requested_season(question: str, default_season: int | None = None) -> int | None:
+    text = (question or "").lower().strip()
+    match = YEAR_PATTERN.search(text)
+    if match:
+        try:
+            return int(match.group(1))
+        except Exception:
+            return default_season
+
+    if "last season" in text or "previous season" in text:
+        if default_season is not None:
+            return max(1900, int(default_season) - 1)
+        return CURRENT_YEAR - 1
+
+    if "this season" in text or "current season" in text:
+        if default_season is not None:
+            return int(default_season)
+        return CURRENT_YEAR
+
+    return default_season
+
+
+def extract_requested_season_type(question: str, default_season_type: str | None = None) -> str | None:
+    text = (question or "").lower().strip()
+    if any(p in text for p in {"playoff", "playoffs", "postseason", "post season"}):
+        return "POST"
+    if any(p in text for p in {"regular season", "reg season"}):
+        return "REG"
+    return (default_season_type or None)
 
 
 def _contains_any(text: str, phrases: set[str]) -> bool:
@@ -203,17 +237,27 @@ def route_query(
     question: str,
     known_codes: set[str],
     team_filter: Optional[str] = None,
+    default_season: int | None = None,
+    default_season_type: str | None = None,
 ) -> Dict[str, Any]:
     raw_question = (question or "").strip()
     text = raw_question.lower()
 
     teams = extract_team_codes(raw_question, known_codes)
+    filter_code = (team_filter or "").upper().strip()
+    if filter_code and filter_code in known_codes and not teams:
+        teams = [filter_code]
     has_sports_intent = _has_sports_intent(text, teams)
+
+    requested_season = extract_requested_season(raw_question, default_season)
+    requested_season_type = extract_requested_season_type(raw_question, default_season_type)
 
     if (_contains_any(text, GREETING_TERMS) or _contains_any(text, SMALLTALK_TERMS)) and not has_sports_intent:
         return {
             "query_type": "smalltalk",
             "raw_question": raw_question,
+            "requested_season": requested_season,
+            "requested_season_type": requested_season_type,
         }
 
     metric_focus = _infer_metric_focus(text)
@@ -236,6 +280,8 @@ def route_query(
             "query_type": "clarify_team",
             "message": "Which team are you asking about?",
             "raw_question": raw_question,
+            "requested_season": requested_season,
+            "requested_season_type": requested_season_type,
         }
 
     elif has_rank and has_trend:
@@ -261,6 +307,8 @@ def route_query(
             "query_type": "unknown",
             "message": "Sorry, I can only analyze sports information. Try asking about team trends, offense, defense, or rankings.",
             "raw_question": raw_question,
+            "requested_season": requested_season,
+            "requested_season_type": requested_season_type,
         }
 
     threshold = None
@@ -280,4 +328,6 @@ def route_query(
         "scope": "team" if teams else "league",
         "threshold": threshold,
         "raw_question": raw_question,
+        "requested_season": requested_season,
+        "requested_season_type": requested_season_type,
     }

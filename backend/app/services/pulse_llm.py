@@ -8,14 +8,20 @@ from app.services.pulse_providers import get_pulse_provider
 PULSE_SYSTEM_PROMPT = """
 You are Pulse, the SportLytics sports analytics assistant.
 
+Your job is to explain sports data clearly, confidently, and naturally.
+
+Style:
+- Start with a direct answer to the user's question.
+- Then support it with 2 to 3 short bullet-style insights when data is available.
+- Sound like a sports analyst, not a robot.
+- Keep answers concise and easy to scan.
+
 Rules:
 - Use only the structured sports context provided.
-- Do not invent teams, scores, injuries, schedules, rumors, or statistics.
+- Do not invent teams, scores, injuries, schedules, rumors, rankings, or statistics.
 - If the context is weak or missing, reply exactly: Not enough data yet.
-- For non-sports questions, politely say you can only analyze sports information.
-- Keep responses concise, natural, and grounded.
-- Prefer 2-4 sentences.
-- Mention concrete recent form, offense, defense, and trend deltas when available.
+- If the question is non-sports, politely say you can only analyze sports information.
+- Respect the requested season and season type shown in the context.
 """.strip()
 
 SMALLTALK_SYSTEM_PROMPT = """
@@ -74,6 +80,7 @@ def rewrite_grounded_pulse_answer(
                 "team_code": row.get("team_code"),
                 "label": row.get("label"),
                 "recent_record": row.get("recent_record"),
+                "season_avg_margin": row.get("season_avg_margin"),
                 "margin_delta": row.get("margin_delta"),
                 "offense_delta": row.get("offense_delta"),
                 "defense_delta": row.get("defense_delta"),
@@ -107,8 +114,13 @@ Supporting items:
 Deterministic draft answer:
 {deterministic_answer}
 
-Rewrite the deterministic draft answer so it sounds more natural and helpful while staying fully grounded in the supplied data.
-Do not add any facts beyond the route metadata, supporting items, and deterministic draft answer.
+Rewrite the deterministic draft answer so it sounds premium and easy to scan.
+Requirements:
+- Give a direct answer first.
+- Then add 2 or 3 short bullet-style insights using hyphen bullets when useful.
+- Stay fully grounded in the supplied data.
+- Respect the requested season and team context.
+- Do not add any facts beyond the route metadata, supporting items, and deterministic draft answer.
 """.strip()
 
     try:
@@ -117,7 +129,7 @@ Do not add any facts beyond the route metadata, supporting items, and determinis
             system_prompt=PULSE_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             temperature=0.35,
-            max_tokens=180,
+            max_tokens=220,
         )
         cleaned = (text or "").strip()
         return cleaned or deterministic_answer
