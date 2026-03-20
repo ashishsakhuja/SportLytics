@@ -12,6 +12,7 @@ QUERY_TYPES = {
     "league_rank",
     "trend_rank",
     "stat_explain",
+    "predictive",
     "smalltalk",
     "unknown",
     "clarify_team",
@@ -100,9 +101,28 @@ RANK_TERMS = {
 
 COMPARE_TERMS = {"compare", "versus", "vs", "against"}
 EXPLAIN_TERMS = {"why", "explain", "how come", "reason", "struggling"}
-
 UP_TERMS = {"up", "improving", "rising", "surging", "better", "hotter"}
 DOWN_TERMS = {"down", "declining", "falling", "sliding", "struggling", "worse", "cold"}
+PREDICTIVE_TERMS = {
+    "predict",
+    "prediction",
+    "project",
+    "projected",
+    "forecast",
+    "future",
+    "going forward",
+    "rest of the season",
+    "next game",
+    "next few",
+    "likely",
+    "likelihood",
+    "expected",
+    "expect",
+    "should they",
+    "will they",
+    "how do we think",
+    "what do we think",
+}
 
 SPORTS_INTENT_TERMS = {
     "team",
@@ -208,7 +228,7 @@ def extract_requested_season_type(question: str, default_season_type: str | None
         return "POST"
     if any(p in text for p in {"regular season", "reg season"}):
         return "REG"
-    return (default_season_type or None)
+    return default_season_type or None
 
 
 def _contains_any(text: str, phrases: set[str]) -> bool:
@@ -286,11 +306,14 @@ def route_query(
     has_rank = _contains_any(text, RANK_TERMS)
     has_trend = _contains_any(text, TREND_TERMS)
     has_explain = _contains_any(text, EXPLAIN_TERMS)
+    has_predictive = _contains_any(text, PREDICTIVE_TERMS)
     has_threshold = THRESHOLD_PATTERN.search(text) is not None
     has_multi_team = len(teams) >= 2
     has_multi_season = len(requested_seasons) >= 2
 
-    if has_compare or has_multi_team or has_multi_season:
+    if has_predictive and (teams or has_threshold or has_sports_intent):
+        query_type = "predictive"
+    elif has_compare or has_multi_team or has_multi_season:
         query_type = "team_compare"
     elif has_explain and teams:
         query_type = "stat_explain"
@@ -318,7 +341,7 @@ def route_query(
     else:
         return {
             "query_type": "unknown",
-            "message": "Sorry, I can only analyze sports information. Try asking about team trends, offense, defense, or rankings.",
+            "message": "Sorry, I can only analyze sports information. Try asking about team trends, offense, defense, rankings, or projections.",
             "raw_question": raw_question,
             "requested_season": requested_season,
             "requested_season_type": requested_season_type,
@@ -357,4 +380,5 @@ def route_query(
         "requested_season_type": requested_season_type,
         "requested_seasons": requested_seasons,
         "compare_kind": compare_kind,
+        "predictive": has_predictive,
     }

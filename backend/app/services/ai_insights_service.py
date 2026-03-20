@@ -21,6 +21,9 @@ from app.services.redis_cache import get_redis
 POINTS_LABEL = {"nfl": "points", "nba": "points", "mlb": "runs", "nhl": "goals"}
 QUERY_TTL_SECONDS = int(os.getenv("AI_QUERY_TTL_SECONDS", "900"))
 STORYLINES_TTL_SECONDS = int(os.getenv("AI_STORYLINES_TTL_SECONDS", "900"))
+PREDICTION_DISCLAIMER = (
+    "Prediction note: this is a trend-based estimate using recent SportLytics data, not a guarantee or betting advice."
+)
 
 
 def _cache_get(key: str) -> Optional[str]:
@@ -47,6 +50,21 @@ def _cache_set(key: str, value: str, ttl: int) -> None:
 
 def _stable_hash(text: str) -> str:
     return hashlib.md5(text.encode("utf-8")).hexdigest()
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _round(value: Optional[float], digits: int = 2) -> Optional[float]:
+    if value is None:
+        return None
+    return round(float(value), digits)
 
 
 def build_team_summaries(
@@ -119,14 +137,16 @@ def _build_storyline_candidates(summaries: List[Dict[str, Any]]) -> List[Dict[st
                     "season_avg_margin": row.get("season_avg_margin"),
                     "last5_avg_margin": row.get("last5_avg_margin"),
                     "prev5_avg_margin": row.get("prev5_avg_margin"),
+                    "season_avg_pf": row.get("season_avg_pf"),
                     "last5_avg_pf": row.get("last5_avg_pf"),
                     "prev5_avg_pf": row.get("prev5_avg_pf"),
+                    "season_avg_pa": row.get("season_avg_pa"),
                     "last5_avg_pa": row.get("last5_avg_pa"),
                     "prev5_avg_pa": row.get("prev5_avg_pa"),
-                    "last5_avg_turnovers": row.get("last5_avg_turnovers"),
-                    "prev5_avg_turnovers": row.get("prev5_avg_turnovers"),
-                    "home_avg_margin": row.get("home_avg_margin"),
-                    "away_avg_margin": row.get("away_avg_margin"),
+                    "offense_delta": row.get("offense_delta"),
+                    "defense_delta": row.get("defense_delta"),
+                    "turnover_delta": row.get("turnover_delta"),
+                    "home_away_gap": row.get("home_away_gap"),
                     "recent_sos": row.get("recent_sos"),
                     "season_sos": row.get("season_sos"),
                     value_key: row.get(value_key),
@@ -197,9 +217,9 @@ def _build_query_context(
         selected = [s for s in summaries if s["team_code"] in teams][:2]
         return {"mode": "team_compare", "items": selected}
 
-    if query_type in {"team_trend", "stat_explain"}:
-        selected = [s for s in summaries if s["team_code"] in teams] if teams else summaries[:1]
-        return {"mode": query_type, "items": selected[:2]}
+    if query_type in {"team_trend", "stat_explain", "predictive"}:
+        selected = [s for s in summaries if s["team_code"] in teams] if teams else summaries[:5]
+        return {"mode": query_type, "items": selected[:5]}
 
     if query_type in {"smalltalk", "unknown", "clarify_team"}:
         return {"mode": query_type, "items": []}
@@ -240,6 +260,213 @@ def _fallback_answer(context: Dict[str, Any], route: Dict[str, Any]) -> str:
     )
 
 
+def _confidence_from_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    games = int(row.get("games") or 0)
+    recent = _safe_float(row.get("last5_avg_margin")) or 0.0
+    previous = _safe_float(row.get("prev5_avg_margin")) or 0.0
+    season = _safe_float(row.get("season_avg_margin")) or 0.0
+    consistency_bonus = 0.1 if (recent >= 0 and season >= 0) or (recent < 0 and season < 0) else 0.0
+    stability_bonus = 0.1 if abs(recent - previous) <= 4 else 0.0
+    sample_bonus = min(0.15, games / 100.0)
+    raw = max(0.38, min(0.84, 0.44 + consistency_bonus + stability_bonus + sample_bonus))
+    label = "low" if raw < 0.52 else ("medium" if raw < 0.68 else "high")
+    return {"score": round(raw, 2), "label": label}
+
+
+def _project_row_forward(row: Dict[str, Any]) -> Dict[str, Any]:
+    last5_pf = _safe_float(row.get("last5_avg_pf"))
+    prev5_pf = _safe_float(row.get("prev5_avg_pf"))
+    season_pf = _safe_float(row.get("season_avg_pf"))
+    last5_pa = _safe_float(row.get("last5_avg_pa"))
+    prev5_pa = _safe_float(row.get("prev5_avg_pa"))
+    season_pa = _safe_float(row.get("season_avg_pa"))
+    last5_margin = _safe_float(row.get("last5_avg_margin"))
+    prev5_margin = _safe_float(row.get("prev5_avg_margin"))
+    season_margin = _safe_float(row.get("season_avg_margin"))
+    recent_sos = _safe_float(row.get("recent_sos"))
+    season_sos = _safe_float(row.get("season_sos"))
+
+    def blend(last5: Optional[float], season: Optional[float], prev5: Optional[float]) -> Optional[float]:
+        vals = [v for v in [last5, season, prev5] if v is not None]
+        if not vals:
+            return None
+        if last5 is None:
+            return _round(sum(vals) / len(vals))
+        return _round(0.55 * (last5 or 0.0) + 0.30 * (season or last5 or 0.0) + 0.15 * (prev5 or season or last5 or 0.0))
+
+    base_pf = blend(last5_pf, season_pf, prev5_pf)
+    base_pa = blend(last5_pa, season_pa, prev5_pa)
+    base_margin = blend(last5_margin, season_margin, prev5_margin)
+
+    sos_adjust = 0.0
+    if recent_sos is not None and season_sos is not None:
+        sos_adjust = max(-1.5, min(1.5, (season_sos - recent_sos) * 8.0))
+
+    projected_pf = _round((base_pf or 0.0) + sos_adjust) if base_pf is not None else None
+    projected_pa = _round((base_pa or 0.0) - sos_adjust) if base_pa is not None else None
+    projected_margin = _round((base_margin or 0.0) + sos_adjust) if base_margin is not None else None
+
+    confidence = _confidence_from_row(row)
+    return {
+        "team_code": row.get("team_code"),
+        "team_label": row.get("label") or row.get("team_code"),
+        "projected_pf": projected_pf,
+        "projected_pa": projected_pa,
+        "projected_margin": projected_margin,
+        "confidence": confidence,
+    }
+
+
+def _build_generated_plot(
+    *,
+    route: Dict[str, Any],
+    sport: str,
+    season: int,
+    season_type: str,
+    items: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not items:
+        return None
+
+    metric_focus = route.get("metric_focus") or "overall"
+    query_type = route.get("query_type")
+    stat_word = POINTS_LABEL.get(sport, "points")
+
+    if query_type == "team_trend":
+        row = items[0]
+        return {
+            "chart_id": f"pulse-trend-{sport}-{row['team_code'].lower()}",
+            "title": f"{row['label']} recent trend snapshot",
+            "subtitle": f"Previous five vs last five {stat_word} and margin",
+            "kind": "bar",
+            "data": [
+                {"label": "Previous 5", "Offense": row.get("prev5_avg_pf"), "Defense Allowed": row.get("prev5_avg_pa"), "Margin": row.get("prev5_avg_margin")},
+                {"label": "Last 5", "Offense": row.get("last5_avg_pf"), "Defense Allowed": row.get("last5_avg_pa"), "Margin": row.get("last5_avg_margin")},
+            ],
+            "series": [
+                {"key": "Offense", "label": "Offense"},
+                {"key": "Defense Allowed", "label": "Defense Allowed"},
+                {"key": "Margin", "label": "Margin"},
+            ],
+            "share_body": f"Pulse generated a recent trend view for {row['label']} on SportLytics. Curious whether everyone else sees the same momentum here.",
+        }
+
+    if query_type == "team_compare" and len(items) >= 2:
+        a, b = items[0], items[1]
+        return {
+            "chart_id": f"pulse-compare-{sport}-{a['team_code'].lower()}-{b['team_code'].lower()}",
+            "title": f"{a['team_code']} vs {b['team_code']} recent comparison",
+            "subtitle": "Last-five performance and trend deltas",
+            "kind": "bar",
+            "data": [
+                {"label": a["team_code"], "Last 5 Offense": a.get("last5_avg_pf"), "Margin Delta": a.get("margin_delta"), "Defense Delta": a.get("defense_delta")},
+                {"label": b["team_code"], "Last 5 Offense": b.get("last5_avg_pf"), "Margin Delta": b.get("margin_delta"), "Defense Delta": b.get("defense_delta")},
+            ],
+            "series": [
+                {"key": "Last 5 Offense", "label": "Last 5 Offense"},
+                {"key": "Margin Delta", "label": "Margin Delta"},
+                {"key": "Defense Delta", "label": "Defense Delta"},
+            ],
+            "share_body": f"Pulse built a head-to-head comparison for {a['label']} and {b['label']} based on recent SportLytics form.",
+        }
+
+    if query_type in {"league_rank", "trend_rank"}:
+        top = items[:5]
+        if metric_focus == "defense":
+            series_key = "Defense Delta"
+            data = [{"label": row["team_code"], series_key: row.get("defense_delta")} for row in top]
+        elif metric_focus == "offense":
+            series_key = "Offense Delta"
+            data = [{"label": row["team_code"], series_key: row.get("offense_delta")} for row in top]
+        else:
+            series_key = "Margin Delta"
+            data = [{"label": row["team_code"], series_key: row.get("margin_delta")} for row in top]
+        return {
+            "chart_id": f"pulse-rank-{sport}-{metric_focus}",
+            "title": f"Pulse top recent movers — {metric_focus.title()}",
+            "subtitle": f"Top 5 by recent {metric_focus} signal",
+            "kind": "bar",
+            "data": data,
+            "series": [{"key": series_key, "label": series_key}],
+            "share_body": f"Pulse surfaced the top recent {metric_focus} movers from the {sport.upper()} dashboard.",
+        }
+
+    if query_type == "predictive":
+        row = items[0]
+        forecast = _project_row_forward(row)
+        return {
+            "chart_id": f"pulse-forecast-{sport}-{row['team_code'].lower()}",
+            "title": f"{row['label']} forward outlook",
+            "subtitle": "Season baseline, recent form, and next-step estimate",
+            "kind": "line",
+            "data": [
+                {"label": "Previous 5", "Offense": row.get("prev5_avg_pf"), "Defense Allowed": row.get("prev5_avg_pa"), "Margin": row.get("prev5_avg_margin")},
+                {"label": "Season Avg", "Offense": row.get("season_avg_pf"), "Defense Allowed": row.get("season_avg_pa"), "Margin": row.get("season_avg_margin")},
+                {"label": "Last 5", "Offense": row.get("last5_avg_pf"), "Defense Allowed": row.get("last5_avg_pa"), "Margin": row.get("last5_avg_margin")},
+                {"label": "Forecast", "Offense": forecast.get("projected_pf"), "Defense Allowed": forecast.get("projected_pa"), "Margin": forecast.get("projected_margin")},
+            ],
+            "series": [
+                {"key": "Offense", "label": "Offense"},
+                {"key": "Defense Allowed", "label": "Defense Allowed"},
+                {"key": "Margin", "label": "Margin"},
+            ],
+            "share_body": f"Pulse generated a forward outlook for {row['label']}. It is trend-based rather than guaranteed, but it is a useful discussion starter.",
+        }
+
+    return None
+
+
+def _answer_predictive(route: Dict[str, Any], sport: str, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    stat_word = POINTS_LABEL.get(sport, "points")
+    threshold = route.get("threshold")
+
+    if route.get("teams"):
+        row = items[0] if items else None
+        if not row:
+            return {"answer": "Not enough data yet.", "prediction": None}
+        forecast = _project_row_forward(row)
+        confidence = forecast["confidence"]
+        phrasing = "hold its level" if (forecast.get("projected_margin") or 0) >= 0 else "face some regression risk"
+        answer = (
+            f"My trend-based read is that {forecast['team_label']} should {phrasing} in the near future. "
+            f"Its blended forecast comes out to about {forecast.get('projected_pf')} {stat_word} scored, {forecast.get('projected_pa')} allowed, "
+            f"and a projected margin around {forecast.get('projected_margin')}. "
+            f"Confidence is {confidence['label']} ({confidence['score']}). {PREDICTION_DISCLAIMER}"
+        )
+        return {"answer": answer, "prediction": forecast}
+
+    ranked: List[Dict[str, Any]] = []
+    for row in items[:5]:
+        forecast = _project_row_forward(row)
+        row_copy = dict(row)
+        row_copy.update({"prediction": forecast})
+        ranked.append(row_copy)
+
+    if threshold is not None and ranked:
+        filtered = [r for r in ranked if (_safe_float((r.get("prediction") or {}).get("projected_pf")) or -999) >= float(threshold)] or ranked
+        parts = [
+            f"{r['team_code']} at {_round((r.get('prediction') or {}).get('projected_pf'))} projected {stat_word}"
+            for r in filtered[:4]
+        ]
+        answer = (
+            f"Based on recent form blended with season baseline, the strongest candidates to clear {threshold:.0f} {stat_word} next time out are "
+            + "; ".join(parts)
+            + f". {PREDICTION_DISCLAIMER}"
+        )
+        return {"answer": answer, "prediction": {"ranked": [{"team_code": r["team_code"], **(r.get("prediction") or {})} for r in filtered[:5]]}}
+
+    top = ranked[:4]
+    answer = (
+        "The teams with the strongest forward momentum right now are "
+        + "; ".join(
+            f"{r['team_code']} (projected margin {_round((r.get('prediction') or {}).get('projected_margin'))}, confidence {(r.get('prediction') or {}).get('confidence', {}).get('label', 'medium')})"
+            for r in top
+        )
+        + f". {PREDICTION_DISCLAIMER}"
+    )
+    return {"answer": answer, "prediction": {"ranked": [{"team_code": r["team_code"], **(r.get("prediction") or {})} for r in top]}}
+
+
 def answer_query(
     db: Session,
     *,
@@ -265,10 +492,12 @@ def answer_query(
     if not question:
         return {
             "assistant_name": "Pulse",
-            "answer": "Ask a question about recent trends, team comparisons, rankings, or why a team is rising and falling.",
+            "answer": "Ask a question about recent trends, team comparisons, rankings, or forward-looking projections.",
             "supporting_items": [],
             "storylines": [],
             "route": None,
+            "generated_plot": None,
+            "prediction": None,
         }
 
     pre_route = route_query(
@@ -282,9 +511,9 @@ def answer_query(
     resolved_season_type = normalize_season_type(pre_route.get("requested_season_type") or base_season_type)
 
     question_key = _stable_hash(question.lower())
-    history_key = _stable_hash(json.dumps(conversation_history, sort_keys=True, default=str)) if conversation_history else 'nohist'
-    session_key = (session_id or 'nosession').strip() or 'nosession'
-    cache_key = f"ai:query:v7:{sport}:{resolved_season}:{resolved_season_type}:{team_code or 'all'}:{session_key}:{history_key}:{question_key}"
+    history_key = _stable_hash(json.dumps(conversation_history, sort_keys=True, default=str)) if conversation_history else "nohist"
+    session_key = (session_id or "nosession").strip() or "nosession"
+    cache_key = f"ai:query:v8:{sport}:{resolved_season}:{resolved_season_type}:{team_code or 'all'}:{session_key}:{history_key}:{question_key}"
     cached = _cache_get(cache_key)
     if cached:
         try:
@@ -311,6 +540,8 @@ def answer_query(
                 "resolved_season_type": resolved_season_type,
                 "team_filter": team_code,
             },
+            "generated_plot": None,
+            "prediction": None,
         }
 
     known_codes = {s["team_code"] for s in summaries}
@@ -335,6 +566,8 @@ def answer_query(
             "supporting_items": [],
             "storylines": [],
             "route": route,
+            "generated_plot": None,
+            "prediction": None,
         }
         _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
         return result
@@ -346,11 +579,13 @@ def answer_query(
             "supporting_items": [],
             "storylines": [],
             "route": route,
+            "generated_plot": None,
+            "prediction": None,
         }
         _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
         return result
 
-    if route["query_type"] in {"team_trend", "stat_explain"} and route.get("teams"):
+    if route["query_type"] in {"team_trend", "stat_explain", "predictive"} and route.get("teams"):
         direct = compute_team_trend_summary(
             db,
             sport=sport,
@@ -362,6 +597,11 @@ def answer_query(
             items = [direct]
             context["items"] = items
 
+    if route["query_type"] == "predictive" and not route.get("teams"):
+        # For league-wide predictions, rank all summaries by projected margin or offense threshold.
+        items = _sort_rows(summaries, route.get("metric_focus") or "offense", "up")[:5]
+        context["items"] = items
+
     storylines = build_storylines(
         db,
         sport=sport,
@@ -370,20 +610,34 @@ def answer_query(
         team_code=team_code,
         limit=4,
     )
-    answer = answer_for_route(route, context, sport)
-    if not answer:
-        answer = _fallback_answer(context, route)
 
-    answer = rewrite_grounded_pulse_answer(
-        question=question,
+    prediction_payload = None
+    if route["query_type"] == "predictive":
+        pred = _answer_predictive(route, sport, items)
+        answer = pred["answer"]
+        prediction_payload = pred.get("prediction")
+    else:
+        answer = answer_for_route(route, context, sport)
+        if not answer:
+            answer = _fallback_answer(context, route)
+        answer = rewrite_grounded_pulse_answer(
+            question=question,
+            sport=sport,
+            season=resolved_season,
+            season_type=resolved_season_type,
+            route=route,
+            items=items,
+            deterministic_answer=answer,
+            conversation_history=conversation_history,
+            session_id=session_id,
+        )
+
+    generated_plot = _build_generated_plot(
+        route=route,
         sport=sport,
         season=resolved_season,
         season_type=resolved_season_type,
-        route=route,
         items=items,
-        deterministic_answer=answer,
-        conversation_history=conversation_history,
-        session_id=session_id,
     )
 
     result = {
@@ -394,6 +648,9 @@ def answer_query(
         "route": route,
         "session_id": session_id,
         "memory_used": bool(conversation_history),
+        "generated_plot": generated_plot,
+        "prediction": prediction_payload,
+        "prediction_disclaimer": PREDICTION_DISCLAIMER if route["query_type"] == "predictive" else None,
     }
     _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
     return result

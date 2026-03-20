@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user_required
 from app.db import get_db
-from app.models import UserAccount
+from app.models import PremiumSubscription, UserAccount, premium_is_active
 from app.services.ai_insights_service import answer_query, build_storylines
 from app.services.ai_service import generate_chart_answer_cached, generate_chart_caption_cached
 
@@ -116,13 +116,15 @@ def query_ai(
         team_code=data.team,
         question=data.question,
         session_id=data.session_id,
-        conversation_history=[{"role": item.role, "text": item.text} for item in (data.history or [])],
+        conversation_history=[{"role": turn.role, "text": turn.text} for turn in data.history],
     )
+    subscription = db.query(PremiumSubscription).filter(PremiumSubscription.user_id == current_user.id).first()
     return {
         **result,
-        "user": {
+        "authenticated_user": {
             "id": current_user.id,
             "email": current_user.email,
             "display_name": current_user.display_name,
+            "is_premium": premium_is_active(subscription),
         },
     }

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { apiGet, apiPost } from "@/lib/api";
 import { getStoredUser, type AuthUser } from "@/lib/auth";
+import PulseGeneratedPlotCard from "@/components/PulseGeneratedPlotCard";
 
 type SportKey = "nfl" | "nba" | "mlb" | "nhl";
 
@@ -58,6 +59,16 @@ type StorylinesResp = {
   items: Storyline[];
 };
 
+type PulseGeneratedPlot = {
+  chart_id: string;
+  title: string;
+  subtitle?: string | null;
+  kind: "bar" | "line";
+  data: Array<Record<string, string | number | null>>;
+  series: Array<{ key: string; label: string }>;
+  share_body?: string | null;
+};
+
 type ChatResp = {
   assistant_name: string;
   answer: string;
@@ -65,6 +76,9 @@ type ChatResp = {
   storylines: Storyline[];
   session_id?: string | null;
   memory_used?: boolean;
+  generated_plot?: PulseGeneratedPlot | null;
+  prediction?: Record<string, unknown> | null;
+  prediction_disclaimer?: string | null;
 };
 
 type ChatMessage = {
@@ -72,6 +86,8 @@ type ChatMessage = {
   role: "assistant" | "user";
   text: string;
   supporting?: SupportingItem[];
+  generatedPlot?: PulseGeneratedPlot | null;
+  predictionDisclaimer?: string | null;
 };
 
 type SavedSession = {
@@ -97,22 +113,22 @@ const SUGGESTED: Record<SportKey, string[]> = {
   nfl: [
     "Which NFL teams are trending up over the last 5 games?",
     "Compare BUF and BAL on recent offensive form.",
-    "Which team has the strongest home vs away split?",
+    "How do we think the Eagles will do in the near future?",
   ],
   nba: [
     "Which NBA teams have improved the most recently?",
     "Compare BOS and CLE on recent form.",
-    "Who is tightening up defensively lately?",
+    "Predict how the Celtics might perform over the next few games.",
   ],
   mlb: [
     "Which MLB teams are gaining momentum lately?",
     "Compare LAD and ATL on recent run margin.",
-    "Which team has the biggest location split?",
+    "Which MLB teams look most likely to keep scoring well going forward?",
   ],
   nhl: [
     "Which NHL teams are trending up recently?",
     "Compare NYR and CAR on recent goal margin.",
-    "Who is defending better over the last 5 games?",
+    "What do we think the Rangers will look like in the next game?",
   ],
 };
 
@@ -368,6 +384,8 @@ export default function SignalCenterPage() {
         role: "assistant",
         text: resp.answer,
         supporting: resp.supporting_items,
+        generatedPlot: resp.generated_plot || null,
+        predictionDisclaimer: resp.prediction_disclaimer || null,
       };
       setMessages((prev) => [...prev, assistantMessage]);
 
@@ -552,6 +570,22 @@ export default function SignalCenterPage() {
                               </div>
                             </div>
                           ))}
+                        </div>
+                      ) : null}
+
+                      {msg.generatedPlot ? (
+                        <PulseGeneratedPlotCard
+                          plot={msg.generatedPlot}
+                          sport={sport}
+                          season={Number(season)}
+                          seasonType={seasonType}
+                          team={team === "all" ? null : team}
+                        />
+                      ) : null}
+
+                      {msg.predictionDisclaimer ? (
+                        <div className="mt-3 rounded-2xl border border-amber-400/20 bg-amber-500/10 p-3 text-xs leading-6 text-amber-100/90">
+                          {msg.predictionDisclaimer}
                         </div>
                       ) : null}
                     </div>
