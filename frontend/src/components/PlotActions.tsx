@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { toPng } from "html-to-image";
 
 import { apiPost } from "@/lib/api";
+import { getStoredUser, type AuthUser } from "@/lib/auth";
 
 type PlotActionsProps = {
   exportRef: RefObject<HTMLElement | null>;
@@ -57,6 +58,7 @@ export default function PlotActions({
   shareBody,
   className = "",
 }: PlotActionsProps) {
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
@@ -69,6 +71,10 @@ export default function PlotActions({
 
   useEffect(() => {
     setMounted(true);
+    setAuthUser(getStoredUser());
+    const onStorage = () => setAuthUser(getStoredUser());
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   useEffect(() => {
@@ -91,6 +97,8 @@ export default function PlotActions({
   }, [open]);
 
   const disabled = !summary || Object.keys(summary).length === 0;
+  const hasPremium = Boolean(authUser?.is_premium);
+  const isSignedIn = Boolean(authUser);
 
   const defaultShareBody = useMemo(() => {
     return (
@@ -137,8 +145,32 @@ export default function PlotActions({
     }
   }
 
+  function openPremiumPage() {
+    window.location.assign("/dashboard/premium");
+  }
+
+  function openSignInPage() {
+    window.location.assign(`/auth/sign-in?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+  }
+
+  function handleOpenPulse() {
+    if (disabled) return;
+    setAskError(null);
+    setAnswer("");
+    setQuestion("");
+    setOpen(true);
+  }
+
   async function handleAskPulse() {
     if (disabled || !question.trim()) return;
+    if (!isSignedIn) {
+      openSignInPage();
+      return;
+    }
+    if (!hasPremium) {
+      setAskError("Pulse chart analysis is part of Premium. Upgrade to unlock Ask Pulse on charts.");
+      return;
+    }
     try {
       setLoading(true);
       setAskError(null);
@@ -160,7 +192,16 @@ export default function PlotActions({
       });
       setAnswer(res.answer || "Not enough data yet.");
     } catch (e: any) {
-      setAskError(e?.message ?? "Pulse could not analyze this chart right now.");
+      const message = String(e?.message ?? "Pulse could not analyze this chart right now.");
+      if (message.includes("401")) {
+        openSignInPage();
+        return;
+      }
+      if (message.includes("403") || message.toLowerCase().includes("premium")) {
+        setAskError("Pulse chart analysis is part of Premium. Upgrade to unlock Ask Pulse on charts.");
+        return;
+      }
+      setAskError(message);
     } finally {
       setLoading(false);
     }
@@ -237,24 +278,54 @@ export default function PlotActions({
           Pulse will answer using the exact chart summary already on this page, not a generic sports prompt.
         </div>
 
-        <textarea
-          autoFocus
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          placeholder="Example: What is the clearest trend here, and is it sustainable?"
-          className="mt-4 h-28 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400/45"
-        />
+        {!isSignedIn ? (
+          <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-4">
+            <div className="text-sm font-semibold text-white">Sign in to use Ask Pulse</div>
+            <div className="mt-1 text-sm text-white/60">
+              Generated AI insights stay free, but interactive Pulse chat on charts requires an account and Premium access.
+            </div>
+            <button
+              onClick={openSignInPage}
+              className="mt-4 rounded-full border border-fuchsia-400/30 bg-fuchsia-500/10 px-4 py-2 text-sm font-semibold text-fuchsia-100 transition hover:bg-fuchsia-500/15"
+            >
+              Sign in
+            </button>
+          </div>
+        ) : !hasPremium ? (
+          <div className="mt-4 rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4">
+            <div className="text-sm font-semibold text-amber-100">Premium required</div>
+            <div className="mt-1 text-sm text-amber-100/80">
+              Ask Pulse on charts is part of SportLytics Premium. Your generated AI insights remain available for free.
+            </div>
+            <button
+              onClick={openPremiumPage}
+              className="mt-4 rounded-full border border-amber-300/30 bg-amber-400/10 px-4 py-2 text-sm font-semibold text-amber-50 transition hover:bg-amber-400/15"
+            >
+              Upgrade to Premium
+            </button>
+          </div>
+        ) : (
+          <>
+            <textarea
+              autoFocus
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              placeholder="Example: What is the clearest trend here, and is it sustainable?"
+              className="mt-4 h-28 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400/45"
+            />
 
-        <div className="mt-3 flex items-center gap-2">
-          <button
-            onClick={handleAskPulse}
-            disabled={loading || !question.trim() || disabled}
-            className="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {loading ? "Analyzing..." : "Ask Pulse"}
-          </button>
-          {disabled ? <div className="text-xs text-white/50">Not enough chart data yet.</div> : null}
-        </div>
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                onClick={handleAskPulse}
+                disabled={loading || !question.trim() || disabled}
+                className="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading ? "Analyzing..." : "Ask Pulse"}
+              </button>
+              {disabled ? <div className="text-xs text-white/50">Not enough chart data yet.</div> : null}
+            </div>
+          </>
+        )}
 
         {askError ? (
           <div className="mt-4 rounded-2xl border border-red-500/25 bg-red-500/10 p-4 text-sm text-red-100">{askError}</div>
@@ -263,7 +334,7 @@ export default function PlotActions({
         <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
           <div className="text-xs uppercase tracking-[0.18em] text-white/45">Pulse response</div>
           <div className="mt-2 whitespace-pre-wrap text-sm leading-7 text-white/85">
-            {answer || "Ask a chart-specific question to get an explanation grounded in this plot’s current summary."}
+            {answer || (hasPremium ? "Ask a chart-specific question to get an explanation grounded in this plot’s current summary." : "Upgrade to Premium to unlock chart-specific Pulse analysis.")}
           </div>
         </div>
       </div>
@@ -280,11 +351,16 @@ export default function PlotActions({
           Download
         </button>
         <button
-          onClick={() => setOpen(true)}
+          onClick={handleOpenPulse}
           disabled={disabled}
-          className="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+          title={!isSignedIn ? "Sign in to use Pulse" : !hasPremium ? "Premium required" : "Ask Pulse"}
+          className={`rounded-full px-4 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+            hasPremium
+              ? "border border-cyan-400/25 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/15"
+              : "border border-amber-400/25 bg-amber-500/10 text-amber-100 hover:bg-amber-500/15"
+          }`}
         >
-          Ask Pulse
+          {hasPremium ? "Ask Pulse" : !isSignedIn ? "Sign in to ask" : "Pulse Premium"}
         </button>
         <button
           onClick={handleShare}

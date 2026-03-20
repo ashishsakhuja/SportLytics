@@ -216,9 +216,25 @@ export default function SignalCenterPage() {
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>(newSessionId());
   const [hydrated, setHydrated] = useState(false);
+  const hasPremium = Boolean(authUser?.is_premium);
 
   useEffect(() => {
     setAuthUser(getStoredUser());
+
+    async function syncAuthUser() {
+      try {
+        const resp = await apiGet<{ authenticated: boolean; user: AuthUser | null }>("/auth/me");
+        if (resp?.authenticated && resp.user) {
+          setAuthUser(resp.user);
+        } else {
+          setAuthUser(getStoredUser());
+        }
+      } catch {
+        setAuthUser(getStoredUser());
+      }
+    }
+
+    syncAuthUser();
     const onStorage = () => setAuthUser(getStoredUser());
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
@@ -329,6 +345,10 @@ export default function SignalCenterPage() {
     router.push(`/auth/sign-in?returnTo=${encodeURIComponent("/dashboard/signal-center")}`);
   }
 
+  function promptUpgrade() {
+    router.push("/dashboard/premium");
+  }
+
   function startNewChat() {
     setCurrentSessionId(newSessionId());
     setMessages([makeWelcomeMessage()]);
@@ -378,6 +398,10 @@ export default function SignalCenterPage() {
       promptSignIn();
       return;
     }
+    if (!hasPremium) {
+      promptUpgrade();
+      return;
+    }
 
     setChatError(null);
     setChatLoading(true);
@@ -418,6 +442,10 @@ export default function SignalCenterPage() {
       const message = String(e?.message ?? "Failed to get an answer from Pulse.");
       if (message.includes("401") || message.toLowerCase().includes("sign in required")) {
         promptSignIn();
+        return;
+      }
+      if (message.includes("403") || message.toLowerCase().includes("premium")) {
+        setChatError("Pulse is part of Premium. Upgrade to continue this conversation.");
         return;
       }
       setChatError(message);
@@ -509,7 +537,7 @@ export default function SignalCenterPage() {
                     <div>
                       <div className="text-sm font-semibold text-cyan-100">Sign in to use Pulse</div>
                       <div className="mt-1 text-sm text-cyan-50/80">
-                        Signal Center storylines stay visible to everyone, but sending Pulse prompts now requires an account.
+                        Signal Center storylines stay visible to everyone, but Pulse chat requires an account and Premium access.
                       </div>
                     </div>
                     <button
@@ -517,12 +545,28 @@ export default function SignalCenterPage() {
                       onClick={promptSignIn}
                       className="rounded-2xl border border-cyan-300/35 bg-cyan-500/15 px-4 py-2.5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/20"
                     >
-                      Sign in to ask Pulse
+                      Sign in to continue
                     </button>
                   </div>
-                ) : (
+                ) : hasPremium ? (
                   <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-                    Signed in as <span className="font-semibold">{authUser.display_name}</span>. Pulse queries are unlocked.
+                    Signed in as <span className="font-semibold">{authUser.display_name}</span>. Pulse Premium is active.
+                  </div>
+                ) : (
+                  <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-amber-100">Pulse is a Premium feature</div>
+                      <div className="mt-1 text-sm text-amber-100/80">
+                        Generated AI storylines stay free, but interactive Pulse chat and predictive answers are only available on Premium.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={promptUpgrade}
+                      className="rounded-2xl border border-amber-300/35 bg-amber-500/15 px-4 py-2.5 text-sm font-semibold text-amber-50 transition hover:bg-amber-500/20"
+                    >
+                      Upgrade to Premium
+                    </button>
                   </div>
                 )}
 
@@ -550,8 +594,8 @@ export default function SignalCenterPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
-                      DB-backed AI
+                    <div className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${hasPremium ? "border border-emerald-400/20 bg-emerald-500/10 text-emerald-200" : "border border-amber-400/20 bg-amber-500/10 text-amber-100"}`}>
+                      {hasPremium ? "Pulse Premium" : "Premium locked"}
                     </div>
                     <button
                       type="button"
@@ -564,6 +608,15 @@ export default function SignalCenterPage() {
                 </div>
 
                 <div className="mt-5 space-y-3">
+                  {!hasPremium ? (
+                    <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4 text-sm text-amber-100/90">
+                      <div className="font-semibold text-amber-50">Pulse chat is locked</div>
+                      <div className="mt-1 leading-7">
+                        You can still browse the free AI storylines on this page. Upgrade to Premium to unlock Signal Center chat, predictive questions, generated Pulse plots, and chart-specific Ask Pulse actions.
+                      </div>
+                    </div>
+                  ) : null}
+
                   {messages.map((msg) => (
                     <div
                       key={msg.id}
@@ -675,24 +728,46 @@ export default function SignalCenterPage() {
                         promptSignIn();
                         return;
                       }
+                      if (!hasPremium) {
+                        promptUpgrade();
+                        return;
+                      }
                       setInput(e.target.value);
                     }}
                     onFocus={() => {
-                      if (!authUser) promptSignIn();
+                      if (!authUser) {
+                        promptSignIn();
+                        return;
+                      }
+                      if (!hasPremium) promptUpgrade();
                     }}
                     onClick={() => {
-                      if (!authUser) promptSignIn();
+                      if (!authUser) {
+                        promptSignIn();
+                        return;
+                      }
+                      if (!hasPremium) promptUpgrade();
                     }}
-                    readOnly={!authUser}
-                    placeholder={authUser ? "Ask Pulse about recent trends, offensive improvement, defense, comparisons, or location splits…" : "Sign in to start asking Pulse questions…"}
-                    className="min-h-[96px] flex-1 rounded-2xl border border-white/10 bg-black/35 px-4 py-3 text-sm text-white outline-none focus:border-fuchsia-400/60"
+                    readOnly={!authUser || !hasPremium}
+                    placeholder={!authUser ? "Sign in to access Pulse…" : hasPremium ? "Ask Pulse about recent trends, offensive improvement, defense, comparisons, or location splits…" : "Upgrade to Premium to unlock Pulse chat…"}
+                    className={`min-h-[96px] flex-1 rounded-2xl border px-4 py-3 text-sm outline-none ${hasPremium ? "border-white/10 bg-black/35 text-white focus:border-fuchsia-400/60" : "border-amber-400/20 bg-amber-500/5 text-white/70"}`}
                   />
                   <button
-                    onClick={() => submitQuestion(input)}
-                    disabled={chatLoading || (authUser ? !input.trim() : false)}
-                    className="rounded-2xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-5 py-3 text-sm font-semibold text-fuchsia-100 transition hover:bg-fuchsia-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => {
+                      if (!authUser) {
+                        promptSignIn();
+                        return;
+                      }
+                      if (!hasPremium) {
+                        promptUpgrade();
+                        return;
+                      }
+                      submitQuestion(input);
+                    }}
+                    disabled={chatLoading || (hasPremium ? !input.trim() : false)}
+                    className={`rounded-2xl px-5 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${hasPremium ? "border border-fuchsia-400/30 bg-fuchsia-500/10 text-fuchsia-100 hover:bg-fuchsia-500/15" : "border border-amber-400/30 bg-amber-500/10 text-amber-100 hover:bg-amber-500/15"}`}
                   >
-                    {authUser ? "Send to Pulse" : "Sign in to ask"}
+                    {!authUser ? "Sign in" : hasPremium ? "Send to Pulse" : "Upgrade to Premium"}
                   </button>
                 </div>
               </div>

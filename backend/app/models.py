@@ -321,6 +321,15 @@ class PremiumSubscription(Base):
 def premium_is_active(sub: PremiumSubscription | None) -> bool:
     if not sub:
         return False
+
+    now = datetime.utcnow()
+
+    if sub.ended_at and sub.ended_at <= now:
+        return False
+
+    if sub.current_period_end and sub.current_period_end <= now:
+        return False
+
     if sub.status in {"active", "trialing", "complimentary"}:
         return True
     return False

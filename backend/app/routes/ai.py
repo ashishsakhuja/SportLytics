@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,21 @@ class ChartQueryRequest(BaseModel):
     question: str
 
 
+def _get_subscription(db: Session, user_id: int) -> PremiumSubscription | None:
+    return db.query(PremiumSubscription).filter(PremiumSubscription.user_id == user_id).first()
+
+
+
+def _require_premium_access(db: Session, current_user: UserAccount) -> PremiumSubscription:
+    subscription = _get_subscription(db, current_user.id)
+    if not premium_is_active(subscription):
+        raise HTTPException(
+            status_code=403,
+            detail="Pulse is available only with an active premium subscription.",
+        )
+    return subscription
+
+
 @router.post("/chart-caption")
 def chart_caption(data: ChartCaptionRequest):
     caption = generate_chart_caption_cached(
@@ -60,7 +75,12 @@ def chart_caption(data: ChartCaptionRequest):
 
 
 @router.post("/chart-query")
-def chart_query(data: ChartQueryRequest):
+def chart_query(
+    data: ChartQueryRequest,
+    current_user: UserAccount = Depends(get_current_user_required),
+    db: Session = Depends(get_db),
+):
+    _require_premium_access(db, current_user)
     answer = generate_chart_answer_cached(
         chart_id=data.chart_id,
         chart_title=data.chart_title,
@@ -108,6 +128,7 @@ def query_ai(
     current_user: UserAccount = Depends(get_current_user_required),
     db: Session = Depends(get_db),
 ):
+    subscription = _require_premium_access(db, current_user)
     result = answer_query(
         db,
         sport=data.sport,
@@ -118,7 +139,6 @@ def query_ai(
         session_id=data.session_id,
         conversation_history=[{"role": turn.role, "text": turn.text} for turn in data.history],
     )
-    subscription = db.query(PremiumSubscription).filter(PremiumSubscription.user_id == current_user.id).first()
     return {
         **result,
         "authenticated_user": {

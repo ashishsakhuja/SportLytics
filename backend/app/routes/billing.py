@@ -20,6 +20,7 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "").strip()
 APP_BASE_URL = os.getenv("SPORTLYTICS_APP_BASE_URL", "http://localhost:3000").rstrip("/")
 ADMIN_ACCESS_KEY = os.getenv("SPORTLYTICS_PREMIUM_ADMIN_KEY", "").strip()
+ADMIN_ACCESS_KEY_EXPIRES_AT = os.getenv("SPORTLYTICS_PREMIUM_ADMIN_KEY_EXPIRES_AT", "").strip()
 
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
@@ -33,6 +34,28 @@ def _to_datetime(ts: int | float | None) -> datetime | None:
     if not ts:
         return None
     return datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
+
+
+def _parse_env_expiration(raw_value: str) -> datetime | None:
+    raw = (raw_value or "").strip()
+    if not raw:
+        return None
+
+    normalized = raw.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "SPORTLYTICS_PREMIUM_ADMIN_KEY_EXPIRES_AT is invalid. "
+                "Use ISO format like 2026-04-01 or 2026-04-01T23:59:59Z."
+            ),
+        ) from exc
+
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
 
 
 def _get_or_create_subscription(db: Session, user_id: int) -> PremiumSubscription:
@@ -167,6 +190,11 @@ def redeem_admin_access(payload: AdminAccessRequest, user: UserAccount = Depends
     if not ADMIN_ACCESS_KEY:
         raise HTTPException(status_code=503, detail="Admin access keys are not configured on the server.")
 
+    key_expires_at = _parse_env_expiration(ADMIN_ACCESS_KEY_EXPIRES_AT)
+    now = _utcnow()
+    if key_expires_at and key_expires_at <= now:
+        raise HTTPException(status_code=403, detail="This admin access key has expired.")
+
     provided = payload.admin_key.strip().encode("utf-8")
     expected = ADMIN_ACCESS_KEY.encode("utf-8")
     if not hmac.compare_digest(hashlib.sha256(provided).digest(), hashlib.sha256(expected).digest()):
@@ -179,10 +207,10 @@ def redeem_admin_access(payload: AdminAccessRequest, user: UserAccount = Depends
     sub.price_cents = 0
     sub.currency = "usd"
     sub.cancel_at_period_end = False
-    sub.started_at = sub.started_at or _utcnow()
-    sub.current_period_end = None
+    sub.started_at = now
+    sub.current_period_end = key_expires_at
     sub.ended_at = None
-    sub.updated_at = _utcnow()
+    sub.updated_at = now
     db.add(sub)
     db.commit()
     return {"ok": True, "subscription": _serialize_subscription(sub)}
