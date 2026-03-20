@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.services.pulse_narrative import answer_for_route, storyline_caption
 from app.services.pulse_query_router import route_query
-from app.services.pulse_smalltalk import generate_smalltalk_response
+from app.services.pulse_llm import generate_smalltalk_response, rewrite_grounded_pulse_answer
 from app.services.pulse_trend_engine import (
     compute_league_trend_summaries,
     compute_team_trend_summary,
@@ -338,6 +338,16 @@ def answer_query(
     answer = answer_for_route(route, context, sport)
     if not answer:
         answer = _fallback_answer(context, route)
+
+    answer = rewrite_grounded_pulse_answer(
+        question=question,
+        sport=sport,
+        season=season,
+        season_type=season_type,
+        route=route,
+        items=items,
+        deterministic_answer=answer,
+    )
 
     result = {
         "assistant_name": "Pulse",
