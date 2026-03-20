@@ -90,6 +90,7 @@ def rewrite_grounded_pulse_answer(
     deterministic_answer: str,
     conversation_history: List[Dict[str, str]] | None = None,
     session_id: str | None = None,
+    related_news: List[Dict[str, Any]] | None = None,
 ) -> str:
     if not deterministic_answer or deterministic_answer.strip() == "Not enough data yet.":
         return "Not enough data yet."
@@ -119,6 +120,18 @@ def rewrite_grounded_pulse_answer(
 
     recent_history = _compact_history(conversation_history)
 
+    compact_news = []
+    for n in (related_news or [])[:5]:
+        compact_news.append({
+            "title": n.get("title"),
+            "source": n.get("source"),
+            "impact_tags": n.get("impact_tags"),
+            "impact_direction": n.get("impact_direction"),
+            "impact_summary": n.get("impact_summary"),
+            "side_of_ball": n.get("side_of_ball"),
+            "move_type": n.get("move_type"),
+        })
+
     user_prompt = f"""
 Session:
 - session_id: {session_id or 'none'}
@@ -140,6 +153,9 @@ Supporting items:
 Recent conversation history:
 {_safe_json(recent_history)}
 
+Related news headlines for grounding:
+{_safe_json(compact_news)}
+
 Deterministic draft answer:
 {deterministic_answer}
 
@@ -149,7 +165,10 @@ Requirements:
 - If this is a follow-up, briefly connect it to the previous turn when helpful.
 - Use bullets only when they improve clarity.
 - Keep the answer grounded and concise.
-- Do not add facts beyond the route metadata, supporting items, conversation history, and deterministic draft answer.
+- Do not add facts beyond the route metadata, supporting items, conversation history, related news headlines, and deterministic draft answer.
+- Never introduce a player, coach, or team name unless it already appears verbatim in the deterministic draft answer or the related news headlines above.
+- If the exact person involved is unclear, say "the recent trade", "the recent injury update", or "the recent roster move" instead of guessing a name.
+- Prefer summarizing the effect of the news instead of restating speculative details.
 """.strip()
 
     try:

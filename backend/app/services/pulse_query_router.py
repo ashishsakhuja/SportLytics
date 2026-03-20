@@ -321,12 +321,14 @@ def route_query(
     wants_news = _contains_any(text, NEWS_TERMS)
     wants_impact = _contains_any(text, IMPACT_TERMS)
 
-    if wants_news and wants_impact and has_sports_intent:
+    if wants_prediction and has_sports_intent:
+        # Predictive questions that mention news or injuries should still route to
+        # the predictive pipeline, which can then pull in recent headlines as context.
+        query_type = "predictive"
+    elif wants_news and wants_impact and has_sports_intent:
         query_type = "news_impact"
     elif wants_news and has_sports_intent:
         query_type = "news_summary"
-    elif wants_prediction:
-        query_type = "predictive"
     elif has_compare or has_multi_team or has_multi_season:
         query_type = "team_compare"
     elif has_explain and teams:

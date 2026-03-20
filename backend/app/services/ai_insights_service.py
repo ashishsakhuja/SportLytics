@@ -514,6 +514,26 @@ def _contains_phrase(text: str, phrases: tuple[str, ...] | set[str]) -> bool:
     return any(p in text for p in phrases)
 
 
+def _news_match_score(item: ContentItem, aliases: List[str]) -> int:
+    fields = [
+        str(item.team or ''),
+        str(item.title or ''),
+        str(item.summary or item.snippet or ''),
+        ' '.join([str(x) for x in (item.teams or [])]),
+        json.dumps(item.entities or {}, default=str),
+    ]
+    hay = ' '.join(fields).lower()
+    score = 0
+    for alias in aliases:
+        a = str(alias or '').strip().lower()
+        if not a:
+            continue
+        if a in hay:
+            # stronger score for exact team names than abbreviations
+            score += 3 if ' ' in a or len(a) > 3 else 1
+    return score
+
+
 def _news_side_of_ball(hay: str) -> str:
     offense_hits = sum(1 for term in OFFENSE_HINTS if term in hay)
     defense_hits = sum(1 for term in DEFENSE_HINTS if term in hay)
@@ -678,6 +698,7 @@ def _fetch_related_news(db: Session, *, sport: str, route: Dict[str, Any], team_
     teams = list(dict.fromkeys((route.get('teams') or []) + ([team_code] if team_code else [])))
     query = db.query(ContentItem).filter(ContentItem.sport == sport).order_by(ContentItem.published_at.desc())
 
+    alias_map: Dict[str, List[str]] = {}
     if teams:
         alias_map = _news_aliases_for_codes(teams)
         conditions = []
@@ -697,8 +718,28 @@ def _fetch_related_news(db: Session, *, sport: str, route: Dict[str, Any], team_
         if conditions:
             query = query.filter(sa.or_(*conditions))
 
-    rows = query.limit(max(1, min(8, limit))).all()
-    return [_serialize_news_item(row) for row in rows]
+    rows = query.limit(24 if teams else max(1, min(8, limit))).all()
+
+    if teams and alias_map:
+        scored = []
+        for row in rows:
+            score = max(_news_match_score(row, alias_map.get(code, [])) for code in teams)
+            if score > 0:
+                scored.append((score, row))
+        scored.sort(key=lambda pair: (pair[0], pair[1].published_at), reverse=True)
+        rows = [row for score, row in scored[: max(1, min(10, limit * 2))]]
+
+    seen: set[str] = set()
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        key = (str(row.url or ''), str(row.title or '').strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(_serialize_news_item(row))
+        if len(out) >= max(1, min(8, limit)):
+            break
+    return out
 
 
 def _build_news_summary_answer(route: Dict[str, Any], items: List[Dict[str, Any]], related_news: List[Dict[str, Any]]) -> str:
@@ -848,7 +889,7 @@ def answer_query(
     question_key = _stable_hash(question.lower())
     history_key = _stable_hash(json.dumps(conversation_history, sort_keys=True, default=str)) if conversation_history else "nohist"
     session_key = (session_id or "nosession").strip() or "nosession"
-    cache_key = f"ai:query:v9:{sport}:{resolved_season}:{resolved_season_type}:{team_code or 'all'}:{session_key}:{history_key}:{question_key}"
+    cache_key = f"ai:query:v10:{sport}:{resolved_season}:{resolved_season_type}:{team_code or 'all'}:{session_key}:{history_key}:{question_key}"
     cached = _cache_get(cache_key)
     if cached:
         try:
@@ -968,6 +1009,7 @@ def answer_query(
             deterministic_answer=answer,
             conversation_history=conversation_history,
             session_id=session_id,
+            related_news=related_news,
         )
     elif route["query_type"] == "news_impact":
         answer = _build_news_impact_answer(route, items, related_news, sport)
@@ -981,6 +1023,7 @@ def answer_query(
             deterministic_answer=answer,
             conversation_history=conversation_history,
             session_id=session_id,
+            related_news=related_news,
         )
     else:
         answer = answer_for_route(route, context, sport)
@@ -996,6 +1039,7 @@ def answer_query(
             deterministic_answer=answer,
             conversation_history=conversation_history,
             session_id=session_id,
+            related_news=related_news,
         )
 
     generated_plot = _build_generated_plot(
