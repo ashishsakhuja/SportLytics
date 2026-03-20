@@ -74,6 +74,135 @@ def _attach_meta(result: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]
     return result
 
 
+def _clip01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _round2(value: float) -> float:
+    return round(float(value), 2)
+
+
+def _confidence_band(score: float) -> str:
+    if score >= 0.8:
+        return "high"
+    if score >= 0.55:
+        return "medium"
+    return "low"
+
+
+def _confidence_summary(label: str) -> str:
+    if label == "high":
+        return "Strong enough sample and signal alignment across the available stats."
+    if label == "medium":
+        return "Useful directional signal, but some context is limited or mixed."
+    return "Limited support in the available data, so treat this as directional only."
+
+
+def _compute_query_confidence(*, route: Dict[str, Any], items: List[Dict[str, Any]], team_filter: str | None = None) -> Dict[str, Any]:
+    query_type = (route or {}).get("query_type") or "unknown"
+    requested_teams = list((route or {}).get("teams") or [])
+    requested_seasons = list((route or {}).get("seasons") or [])
+    item_count = len(items or [])
+
+    score = 0.35
+    reasons: List[str] = []
+
+    if query_type in {"team_trend", "team_compare", "stat_explain", "chart_explain"}:
+        score += 0.10
+        reasons.append("clear question type detected")
+
+    if team_filter or requested_teams:
+        score += 0.10
+        reasons.append("team scope is specific")
+
+    if requested_seasons:
+        if len(requested_seasons) == 1:
+            score += 0.08
+            reasons.append("season is explicitly grounded")
+        else:
+            score += 0.04
+            reasons.append("multiple seasons requested")
+
+    if query_type == "team_compare":
+        if len(requested_teams) >= 2 and item_count >= 2:
+            score += 0.18
+            reasons.append("both comparison teams resolved")
+        else:
+            score -= 0.10
+            reasons.append("comparison scope is only partially resolved")
+    elif query_type in {"team_trend", "stat_explain"}:
+        if item_count >= 1:
+            score += 0.18
+            reasons.append("direct team summary available")
+        else:
+            score -= 0.12
+            reasons.append("team summary is limited")
+    elif query_type in {"league_rank", "league_trend", "trend_rank"}:
+        if item_count >= 3:
+            score += 0.14
+            reasons.append("multiple league rows support the ranking")
+        else:
+            score -= 0.08
+            reasons.append("ranking support is thin")
+    elif query_type in {"smalltalk", "unknown", "clarify_team"}:
+        score = 0.92
+        reasons = ["response does not depend on sports stats"]
+
+    completeness_values: List[float] = []
+    metric_keys = [
+        "recent_record",
+        "margin_delta",
+        "offense_delta",
+        "defense_delta",
+        "last5_avg_pf",
+        "last5_avg_pa",
+    ]
+    for row in (items or [])[:4]:
+        present = sum(1 for key in metric_keys if row.get(key) is not None)
+        completeness_values.append(present / len(metric_keys))
+    if completeness_values:
+        completeness = sum(completeness_values) / len(completeness_values)
+        score += (completeness - 0.5) * 0.24
+        reasons.append(f"stat completeness {int(round(completeness * 100))}%")
+
+    score = _clip01(score)
+    label = _confidence_band(score)
+    return {
+        "score": _round2(score),
+        "label": label,
+        "summary": _confidence_summary(label),
+        "reasons": reasons[:4],
+    }
+
+
+def _compute_chart_confidence(*, summary: Dict[str, Any], question: str) -> Dict[str, Any]:
+    keys = [key for key, value in (summary or {}).items() if value is not None]
+    count = len(keys)
+    score = 0.42
+    if count >= 6:
+        score += 0.28
+    elif count >= 3:
+        score += 0.16
+    else:
+        score += 0.04
+
+    q = (question or "").lower()
+    if any(token in q for token in ["why", "trend", "stand out", "outlier", "compare"]):
+        score += 0.08
+
+    score = _clip01(score)
+    label = _confidence_band(score)
+    reasons = [f"chart summary includes {count} populated fields"]
+    if count < 4:
+        reasons.append("chart context is somewhat thin")
+    return {
+        "score": _round2(score),
+        "label": label,
+        "summary": _confidence_summary(label),
+        "reasons": reasons[:3],
+    }
+
+
 def build_team_summaries(
     db: Session,
     *,
@@ -304,7 +433,7 @@ def answer_chart_query(
             "route": {"query_type": "chart_explain", "chart_id": chart_id, "chart_title": chart_title},
         }, _meta_payload(cache_status="skip", source="deterministic", note="missing-question-or-summary"))
 
-    cache_key = f"ai:chart-query:v3:{sport}:{season}:{season_type}:{team_code or 'all'}:{chart_id}:{_stable_json_hash(summary)}:{_stable_hash(question.lower())}"
+    cache_key = f"ai:chart-query:v5:{sport}:{season}:{season_type}:{team_code or 'all'}:{chart_id}:{_stable_json_hash(summary)}:{_stable_hash(question.lower())}"
     cached = _cache_get(cache_key)
     if cached:
         try:
@@ -347,6 +476,8 @@ def answer_chart_query(
         },
     )
 
+    confidence = _compute_chart_confidence(summary=summary, question=question)
+
     rewritten, rewrite_meta = rewrite_grounded_pulse_answer_with_meta(
         question=question,
         sport=sport,
@@ -355,7 +486,7 @@ def answer_chart_query(
         route=route,
         items=[],
         deterministic_answer=deterministic_answer,
-        extra_context=extra_context,
+        extra_context={**extra_context, "confidence": confidence},
     )
 
     result = _attach_meta({
@@ -363,6 +494,7 @@ def answer_chart_query(
         "answer": rewritten,
         "supporting_items": [],
         "route": route,
+        "confidence": confidence,
     }, _meta_payload(
         cache_status="miss",
         provider=rewrite_meta.get("provider", "none"),
@@ -399,6 +531,7 @@ def answer_query(
             "supporting_items": [],
             "storylines": [],
             "route": None,
+            "confidence": {"score": 0.98, "label": "high", "summary": "No analytics claim was made.", "reasons": ["prompt is instructional only"]},
         }, _meta_payload(cache_status="skip", source="deterministic", note="empty-question"))
 
     pre_route = route_query(
@@ -413,7 +546,7 @@ def answer_query(
 
     question_key = _stable_hash(question.lower())
     context_key = _stable_json_hash(_merge_context_payload(page_context=page_context, chart_context=chart_context))
-    cache_key = f"ai:query:v6:{sport}:{resolved_season}:{resolved_season_type}:{team_code or 'all'}:{context_key}:{question_key}"
+    cache_key = f"ai:query:v8:{sport}:{resolved_season}:{resolved_season_type}:{team_code or 'all'}:{context_key}:{question_key}"
     cached = _cache_get(cache_key)
     if cached:
         try:
@@ -442,6 +575,7 @@ def answer_query(
                 "resolved_season_type": resolved_season_type,
                 "team_filter": team_code,
             },
+            "confidence": {"score": 0.28, "label": "low", "summary": "Limited support in the available data, so treat this as directional only.", "reasons": ["no season summaries were available"]},
         }, _meta_payload(cache_status="miss", source="deterministic", note="no-summaries"))
 
     known_codes = {s["team_code"] for s in summaries}
@@ -470,6 +604,7 @@ def answer_query(
             "supporting_items": [],
             "storylines": [],
             "route": route,
+            "confidence": {"score": 0.96, "label": "high", "summary": "No stat-based claim was required for this reply.", "reasons": ["small-talk response only"]},
         }, _meta_payload(cache_status="miss", source="deterministic", note="smalltalk"))
         _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
         return result
@@ -481,6 +616,7 @@ def answer_query(
             "supporting_items": [],
             "storylines": [],
             "route": route,
+            "confidence": {"score": 0.95, "label": "high", "summary": "Pulse is waiting for a clearer target before making an analytics claim.", "reasons": ["team resolution needs clarification"]},
         }, _meta_payload(cache_status="miss", source="deterministic", note="clarify-team"))
         _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
         return result
@@ -509,6 +645,8 @@ def answer_query(
     if not deterministic_answer:
         deterministic_answer = _fallback_answer(context, route)
 
+    confidence = _compute_query_confidence(route=route, items=items, team_filter=team_code)
+
     rewritten, rewrite_meta = rewrite_grounded_pulse_answer_with_meta(
         question=question,
         sport=sport,
@@ -517,7 +655,7 @@ def answer_query(
         route=route,
         items=items,
         deterministic_answer=deterministic_answer,
-        extra_context=_merge_context_payload(page_context=page_context, chart_context=chart_context),
+        extra_context={**_merge_context_payload(page_context=page_context, chart_context=chart_context), "confidence": confidence},
     )
 
     result = _attach_meta({
@@ -526,6 +664,7 @@ def answer_query(
         "supporting_items": items[:5],
         "storylines": storylines,
         "route": route,
+        "confidence": confidence,
     }, _meta_payload(
         cache_status="miss",
         provider=rewrite_meta.get("provider", "none"),

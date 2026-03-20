@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Dict, List, Tuple
 
 from app.services.pulse_providers import get_fallback_pulse_provider, get_pulse_provider
@@ -12,47 +13,26 @@ You are Pulse, the SportLytics sports analytics assistant.
 Your job is to explain sports data clearly, confidently, and naturally.
 
 Style:
-- Start with a direct answer to the user's question.
-- Then support it with 2 to 4 short bullet-style insights when data is available.
-- Sound like a sports analyst, not a robot.
-- Keep answers concise and easy to scan.
-- Prefer crisp comparisons and trend language over generic filler.
+- Sound like a sharp sports analyst, not a robot.
+- Give a direct answer first, then support it with 1 to 3 concise points only if they add value.
+- Vary the structure naturally: a short paragraph, or a short paragraph plus a few bullets.
+- Weave confidence in naturally near the end instead of forcing a rigid template.
+- Keep answers concise, premium, and easy to scan.
 
 Rules:
 - Use only the structured sports context provided.
 - Do not invent teams, scores, injuries, schedules, rumors, rankings, or statistics.
+- Preserve the facts from the deterministic answer.
 - If the context is weak or missing, reply exactly: Not enough data yet.
 - If the question is non-sports, politely say you can only analyze sports information.
 - Respect the requested season and season type shown in the context.
-- Never exceed 150 words.
+- Never exceed 170 words.
+- Avoid repeating the same response template every time.
+- Do not use the labels Bottom line, Why, or Confidence unless the user explicitly asks for them.
 """.strip()
 
 MAX_TOKENS = int(os.getenv("PULSE_MAX_TOKENS", "320"))
 TEMPERATURE = float(os.getenv("PULSE_TEMPERATURE", "0.35"))
-
-
-def _serialize_items(items: List[Dict[str, Any]]) -> str:
-    trimmed: List[Dict[str, Any]] = []
-    for row in items[:6]:
-        trimmed.append({
-            "team_code": row.get("team_code"),
-            "label": row.get("label"),
-            "recent_record": row.get("recent_record"),
-            "last5_avg_margin": row.get("last5_avg_margin"),
-            "prev5_avg_margin": row.get("prev5_avg_margin"),
-            "margin_delta": row.get("margin_delta"),
-            "last5_avg_pf": row.get("last5_avg_pf"),
-            "prev5_avg_pf": row.get("prev5_avg_pf"),
-            "offense_delta": row.get("offense_delta"),
-            "last5_avg_pa": row.get("last5_avg_pa"),
-            "prev5_avg_pa": row.get("prev5_avg_pa"),
-            "defense_delta": row.get("defense_delta"),
-            "turnover_delta": row.get("turnover_delta"),
-            "home_away_gap": row.get("home_away_gap"),
-            "recent_sos": row.get("recent_sos"),
-            "season_sos": row.get("season_sos"),
-        })
-    return json.dumps(trimmed, indent=2, default=str)
 
 
 def _build_user_prompt(
@@ -83,7 +63,9 @@ def _build_user_prompt(
         f"{json.dumps(payload, indent=2, default=str)}\n\n"
         "Rewrite the deterministic answer into a premium sports-analytics response. "
         "Keep it tight, preserve the same facts, and do not add any new information. "
-        "Use a direct lead sentence followed by compact bullets only when they help readability."
+        "Answer naturally instead of using a fixed template. A short paragraph is usually best; add 1-3 bullets only when they help. "
+        "Mention confidence naturally near the end using the confidence payload, but do not use a rigid heading for it. "
+        "Do not mention internal routing, cache details, or raw payload field names."
     )
 
 
@@ -92,6 +74,71 @@ def generate_smalltalk_response(question: str) -> str:
     if any(x in q for x in ["hello", "hi", "hey", "yo", "what's up", "whats up"]):
         return "Hello — I’m Pulse, your SportLytics signal assistant. Ask about recent movers, team comparisons, offense, defense, or home-away splits."
     return "Sorry, I can only analyze sports information."
+
+
+def _confidence_tail(extra_context: Dict[str, Any] | None) -> str:
+    confidence = ((extra_context or {}).get("confidence") or {}) if isinstance(extra_context, dict) else {}
+    label = str(confidence.get("label") or "").strip().lower()
+    summary = str(confidence.get("summary") or "").strip()
+    if label == "high":
+        return summary or "I'm fairly confident in that read given the quality of the available stats."
+    if label == "medium":
+        return summary or "I'd treat that as a solid directional read, though some of the context is mixed."
+    if label == "low":
+        return summary or "I'd treat that as directional only because the supporting context is limited."
+    return summary
+
+
+def _naturalize_rigid_response(text: str, extra_context: Dict[str, Any] | None = None) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+
+    compact = raw.replace("\r\n", "\n")
+    if "**Bottom line:**" not in compact and "**Why:**" not in compact and "**Confidence:**" not in compact:
+        return compact
+
+    bottom = ""
+    why_block = ""
+    conf = ""
+
+    m_bottom = re.search(r"\*\*Bottom line:\*\*\s*(.*?)(?=\n\s*\*\*Why:\*\*|\n\s*\*\*Confidence:\*\*|$)", compact, re.S)
+    if m_bottom:
+        bottom = m_bottom.group(1).strip()
+
+    m_why = re.search(r"\*\*Why:\*\*\s*(.*?)(?=\n\s*\*\*Confidence:\*\*|$)", compact, re.S)
+    if m_why:
+        why_block = m_why.group(1).strip()
+
+    m_conf = re.search(r"\*\*Confidence:\*\*\s*(.*)$", compact, re.S)
+    if m_conf:
+        conf = m_conf.group(1).strip()
+
+    parts: List[str] = []
+    if bottom:
+        parts.append(bottom)
+
+    if why_block:
+        bullets: List[str] = []
+        for line in why_block.splitlines():
+            item = re.sub(r"^[\-•]\s*", "", line.strip())
+            if item:
+                bullets.append(f"- {item}")
+        if bullets:
+            parts.append("\n".join(bullets[:3]))
+        elif why_block:
+            parts.append(why_block)
+
+    tail = _confidence_tail(extra_context)
+    if conf and not tail:
+        tail = conf
+    if tail:
+        tail = tail.rstrip(".") + "."
+        if not re.match(r"(?i)^(i'm|i am|this is|that is|it's|its|treat|confidence)", tail):
+            tail = f"I'm fairly confident in that read because {tail[0].lower() + tail[1:]}"
+        parts.append(tail)
+
+    return "\n\n".join(part for part in parts if part).strip() or compact
 
 
 def _provider_name(provider: Any) -> str:
@@ -175,6 +222,7 @@ def rewrite_grounded_pulse_answer_with_meta(
             max_tokens=MAX_TOKENS,
         ) or "").strip()
         if rewritten:
+            rewritten = _naturalize_rigid_response(rewritten, extra_context)
             return rewritten, {
                 "provider": _provider_name(primary),
                 "fallback_used": False,
@@ -200,6 +248,7 @@ def rewrite_grounded_pulse_answer_with_meta(
                 max_tokens=MAX_TOKENS,
             ) or "").strip()
             if rewritten:
+                rewritten = _naturalize_rigid_response(rewritten, extra_context)
                 return rewritten, {
                     "provider": _provider_name(fallback),
                     "fallback_used": True,
