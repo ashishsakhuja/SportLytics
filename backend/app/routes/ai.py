@@ -1,14 +1,19 @@
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user_required
 from app.db import get_db
 from app.models import UserAccount
-from app.services.ai_insights_service import answer_query, answer_chart_query, build_storylines
-from app.services.ai_service import generate_chart_caption_cached
+from app.services.ai_insights_service import answer_query, build_storylines
+from app.services.ai_service import generate_chart_answer_cached, generate_chart_caption_cached
 
 router = APIRouter(prefix="/ai", tags=["AI"])
+
+
+class ChatTurn(BaseModel):
+    role: str
+    text: str = Field(..., min_length=1)
 
 
 class ChartCaptionRequest(BaseModel):
@@ -26,8 +31,8 @@ class QueryRequest(BaseModel):
     season_type: str = "REG"
     team: str | None = None
     question: str
-    page_context: dict | None = None
-    chart_context: dict | None = None
+    session_id: str | None = None
+    history: list[ChatTurn] = []
 
 
 class ChartQueryRequest(BaseModel):
@@ -39,7 +44,6 @@ class ChartQueryRequest(BaseModel):
     team: str | None = None
     summary: dict
     question: str
-    page_context: dict | None = None
 
 
 @router.post("/chart-caption")
@@ -56,20 +60,18 @@ def chart_caption(data: ChartCaptionRequest):
 
 
 @router.post("/chart-query")
-def chart_query(data: ChartQueryRequest, db: Session = Depends(get_db)):
-    result = answer_chart_query(
-        db,
+def chart_query(data: ChartQueryRequest):
+    answer = generate_chart_answer_cached(
         chart_id=data.chart_id,
         chart_title=data.chart_title,
         sport=data.sport,
         season=data.season,
         season_type=data.season_type,
-        team_code=data.team,
+        team=data.team,
         summary=data.summary,
         question=data.question,
-        page_context=data.page_context,
     )
-    return result
+    return {"answer": answer}
 
 
 @router.get("/storylines")
@@ -113,8 +115,8 @@ def query_ai(
         season_type=data.season_type,
         team_code=data.team,
         question=data.question,
-        page_context=data.page_context,
-        chart_context=data.chart_context,
+        session_id=data.session_id,
+        conversation_history=[{"role": item.role, "text": item.text} for item in (data.history or [])],
     )
     return {
         **result,

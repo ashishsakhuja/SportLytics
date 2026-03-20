@@ -26,7 +26,7 @@ class HuggingFaceProvider(PulseLLMProvider):
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.35,
-        max_tokens: int = 320,
+        max_tokens: int = 325,
     ) -> str:
         resp = self.client.chat.completions.create(
             model=self.model,

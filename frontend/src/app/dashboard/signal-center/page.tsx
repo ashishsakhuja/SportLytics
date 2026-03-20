@@ -7,7 +7,6 @@ import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { getStoredUser, type AuthUser } from "@/lib/auth";
 
-
 type SportKey = "nfl" | "nba" | "mlb" | "nhl";
 
 type TeamRow = {
@@ -64,6 +63,8 @@ type ChatResp = {
   answer: string;
   supporting_items: SupportingItem[];
   storylines: Storyline[];
+  session_id?: string | null;
+  memory_used?: boolean;
 };
 
 type ChatMessage = {
@@ -71,6 +72,18 @@ type ChatMessage = {
   role: "assistant" | "user";
   text: string;
   supporting?: SupportingItem[];
+};
+
+type SavedSession = {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  sport: SportKey;
+  season: string;
+  seasonType: string;
+  team: string;
+  messages: ChatMessage[];
 };
 
 const SPORTS: Array<{ key: SportKey; label: string }> = [
@@ -103,9 +116,29 @@ const SUGGESTED: Record<SportKey, string[]> = {
   ],
 };
 
+const WELCOME_TEXT =
+  "I’m Pulse, your SportLytics signal assistant. Ask about recent movers, team comparisons, offense, defense, or home-away splits.";
+const STORAGE_KEY = "sportlytics.pulse.sessions.v1";
+const MAX_SAVED_SESSIONS = 8;
+
 function formatNum(v: number | null | undefined) {
   if (v == null || !Number.isFinite(v)) return "—";
   return Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(2);
+}
+
+function makeWelcomeMessage(): ChatMessage {
+  return { id: "welcome", role: "assistant", text: WELCOME_TEXT };
+}
+
+function newSessionId() {
+  return `pulse-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildSessionTitle(messages: ChatMessage[]) {
+  const firstUser = messages.find((m) => m.role === "user" && m.text.trim());
+  if (!firstUser) return "New Pulse chat";
+  const clean = firstUser.text.trim();
+  return clean.length > 46 ? `${clean.slice(0, 46)}…` : clean;
 }
 
 function Select({
@@ -145,20 +178,47 @@ export default function SignalCenterPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      text:
-        "I’m Pulse, your SportLytics signal assistant. Ask about recent movers, team comparisons, offense, defense, or home-away splits.",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([makeWelcomeMessage()]);
+  const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string>(newSessionId());
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     setAuthUser(getStoredUser());
     const onStorage = () => setAuthUser(getStoredUser());
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        setHydrated(true);
+        return;
+      }
+      const parsed = JSON.parse(raw) as SavedSession[];
+      if (!Array.isArray(parsed) || !parsed.length) {
+        setHydrated(true);
+        return;
+      }
+      const normalized = parsed.slice(0, MAX_SAVED_SESSIONS).map((item) => ({
+        ...item,
+        messages: Array.isArray(item.messages) && item.messages.length ? item.messages : [makeWelcomeMessage()],
+      }));
+      setSavedSessions(normalized);
+      const latest = normalized[0];
+      setCurrentSessionId(latest.id);
+      setSport(latest.sport);
+      setSeason(latest.season);
+      setSeasonType(latest.seasonType);
+      setTeam(latest.team);
+      setMessages(latest.messages);
+    } catch {
+      // ignore broken local data
+    } finally {
+      setHydrated(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -197,6 +257,34 @@ export default function SignalCenterPage() {
     loadStorylines();
   }, [sport, season, seasonType, team]);
 
+  useEffect(() => {
+    if (!hydrated) return;
+    const safeMessages = messages.length ? messages : [makeWelcomeMessage()];
+    const nextSession: SavedSession = {
+      id: currentSessionId,
+      title: buildSessionTitle(safeMessages),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sport,
+      season,
+      seasonType,
+      team,
+      messages: safeMessages,
+    };
+    setSavedSessions((prev) => {
+      const existing = prev.find((item) => item.id === currentSessionId);
+      const createdAt = existing?.createdAt || nextSession.createdAt;
+      const merged: SavedSession = { ...nextSession, createdAt, updatedAt: new Date().toISOString() };
+      const ordered = [merged, ...prev.filter((item) => item.id !== currentSessionId)].slice(0, MAX_SAVED_SESSIONS);
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(ordered));
+      } catch {
+        // ignore local storage failures
+      }
+      return ordered;
+    });
+  }, [currentSessionId, hydrated, messages, season, seasonType, sport, team]);
+
   const selectedTeamLabel = useMemo(() => {
     if (team === "all") return "League-wide";
     const match = teams.find((t) => t.team_code === team);
@@ -205,6 +293,47 @@ export default function SignalCenterPage() {
 
   function promptSignIn() {
     router.push(`/auth/sign-in?returnTo=${encodeURIComponent("/dashboard/signal-center")}`);
+  }
+
+  function startNewChat() {
+    setCurrentSessionId(newSessionId());
+    setMessages([makeWelcomeMessage()]);
+    setInput("");
+    setChatError(null);
+  }
+
+  function openSavedSession(session: SavedSession) {
+    setCurrentSessionId(session.id);
+    setSport(session.sport);
+    setSeason(session.season);
+    setSeasonType(session.seasonType);
+    setTeam(session.team);
+    setMessages(session.messages?.length ? session.messages : [makeWelcomeMessage()]);
+    setInput("");
+    setChatError(null);
+  }
+
+  function deleteSavedSession(sessionId: string) {
+    setSavedSessions((prev) => {
+      const filtered = prev.filter((item) => item.id !== sessionId);
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+      } catch {}
+      if (sessionId === currentSessionId) {
+        if (filtered.length) {
+          const next = filtered[0];
+          setCurrentSessionId(next.id);
+          setSport(next.sport);
+          setSeason(next.season);
+          setSeasonType(next.seasonType);
+          setTeam(next.team);
+          setMessages(next.messages?.length ? next.messages : [makeWelcomeMessage()]);
+        } else {
+          startNewChat();
+        }
+      }
+      return filtered;
+    });
   }
 
   async function submitQuestion(question: string) {
@@ -218,7 +347,9 @@ export default function SignalCenterPage() {
 
     setChatError(null);
     setChatLoading(true);
-    setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text: trimmed }]);
+    const nextUserMessage: ChatMessage = { id: `u-${Date.now()}`, role: "user", text: trimmed };
+    const nextHistory = [...messages, nextUserMessage];
+    setMessages(nextHistory);
     setInput("");
 
     try {
@@ -228,20 +359,23 @@ export default function SignalCenterPage() {
         season_type: seasonType,
         team: team === "all" ? null : team,
         question: trimmed,
+        session_id: currentSessionId,
+        history: nextHistory.slice(-8).map((msg) => ({ role: msg.role, text: msg.text })),
       });
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `a-${Date.now()}`,
-          role: "assistant",
-          text: resp.answer,
-          supporting: resp.supporting_items,
-        },
-      ]);
+      const assistantMessage: ChatMessage = {
+        id: `a-${Date.now()}`,
+        role: "assistant",
+        text: resp.answer,
+        supporting: resp.supporting_items,
+      };
+      setMessages((prev) => [...prev, assistantMessage]);
 
       if (resp.storylines?.length) {
         setStorylines(resp.storylines);
+      }
+      if (resp.session_id && resp.session_id !== currentSessionId) {
+        setCurrentSessionId(resp.session_id);
       }
     } catch (e: any) {
       const message = String(e?.message ?? "Failed to get an answer from Pulse.");
@@ -378,8 +512,17 @@ export default function SignalCenterPage() {
                       Grounded answers for {SPORTS.find((s) => s.key === sport)?.label} • {selectedTeamLabel}
                     </div>
                   </div>
-                  <div className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
-                    DB-backed AI
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-200">
+                      DB-backed AI
+                    </div>
+                    <button
+                      type="button"
+                      onClick={startNewChat}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/75 transition hover:bg-white/10 hover:text-white"
+                    >
+                      New chat
+                    </button>
                   </div>
                 </div>
 
@@ -394,7 +537,7 @@ export default function SignalCenterPage() {
                       <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/45">
                         {msg.role === "assistant" ? "Pulse" : "You"}
                       </div>
-                      <div className="text-sm leading-7 text-white/90">{msg.text}</div>
+                      <div className="whitespace-pre-wrap text-sm leading-7 text-white/90">{msg.text}</div>
 
                       {msg.supporting?.length ? (
                         <div className="mt-3 grid grid-cols-1 gap-2 xl:grid-cols-2">
@@ -460,6 +603,56 @@ export default function SignalCenterPage() {
           </div>
 
           <aside className="space-y-6">
+            <section className="sl-plasma-card">
+              <div className="sl-plasma-inner rounded-3xl border border-white/10 bg-white/5 p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-base font-semibold">Recent chats</div>
+                    <div className="text-sm text-white/60">
+                      Pulse remembers the current session, and the last {MAX_SAVED_SESSIONS} chats stay saved here.
+                    </div>
+                  </div>
+                  <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-white/55">
+                    Session memory
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {savedSessions.length === 0 ? (
+                    <div className="rounded-2xl border border-white/10 bg-black/25 p-4 text-sm text-white/60">
+                      Your Pulse chats will start saving here after the first exchange.
+                    </div>
+                  ) : null}
+
+                  {savedSessions.map((session) => {
+                    const active = session.id === currentSessionId;
+                    return (
+                      <div key={session.id} className={`rounded-2xl border p-3 ${active ? "border-fuchsia-400/30 bg-fuchsia-500/10" : "border-white/10 bg-black/25"}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <button
+                            type="button"
+                            onClick={() => openSavedSession(session)}
+                            className="flex-1 text-left"
+                          >
+                            <div className="text-sm font-semibold text-white">{session.title}</div>
+                            <div className="mt-1 text-xs text-white/55">{session.sport.toUpperCase()} • {session.season} • {session.team === "all" ? "League-wide" : session.team}</div>
+                            <div className="mt-2 text-xs text-white/45">{session.messages.length} messages saved</div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteSavedSession(session.id)}
+                            className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-white/55 transition hover:bg-white/10 hover:text-white"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
+
             <section className="sl-plasma-card">
               <div className="sl-plasma-inner rounded-3xl border border-white/10 bg-white/5 p-5">
                 <div className="flex items-center justify-between gap-3">
