@@ -104,12 +104,49 @@ const STOPWORDS = new Set([
   "be",
   "been",
   "being",
+  "am",
+  "can",
+  "could",
+  "should",
+  "would",
+  "will",
+  "has",
+  "have",
+  "had",
+  "do",
+  "does",
+  "did",
+  "done",
+  "doing",
+  "their",
+  "there",
+  "they",
+  "them",
+  "his",
+  "her",
+  "hers",
+  "him",
+  "she",
+  "he",
+  "who",
+  "whom",
+  "whose",
+  "you",
+  "your",
+  "our",
+  "ours",
+  "we",
+  "us",
+  "i",
+  "my",
+  "me",
   "it",
   "its",
   "this",
   "that",
   "these",
   "those",
+  "here",
   "after",
   "before",
   "over",
@@ -123,15 +160,73 @@ const STOPWORDS = new Set([
   "new",
   "news",
   "report",
+  "reports",
+  "story",
+  "stories",
+  "live",
+  "update",
+  "updates",
+  "latest",
+  "today",
+  "tonight",
+  "tomorrow",
+  "yesterday",
+  "said",
+  "says",
+  "say",
+  "according",
+  "source",
+  "sources",
+  "via",
+  "more",
+  "most",
+  "best",
+  "next",
+  "now",
+  "then",
+  "than",
+  "still",
+  "just",
+  "also",
+  "about",
+  "around",
+  "through",
+  "during",
+  "against",
+  "across",
+  "between",
   "game",
   "games",
   "season",
+  "match",
+  "matches",
+  "win",
+  "wins",
+  "loss",
+  "losses",
   "team",
   "teams",
   "player",
   "players",
   "coach",
   "coaches",
+  "sports",
+  "sport",
+  "league",
+  "leagues",
+]);
+
+const BANNED_TOPIC_TERMS = new Set([
+  "espn",
+  "ap",
+  "getty",
+  "images",
+  "inc",
+  "llc",
+  "com",
+  "www",
+  "http",
+  "https",
 ]);
 
 function clamp(n: number, lo: number, hi: number) {
@@ -173,14 +268,78 @@ function bucketSeries(items: NewsItem[], hours: number, sport: string | null) {
   return bucket;
 }
 
-function extractKeywords(text: string) {
+function isUsefulTrendTerm(term: string) {
+  if (!term) return false;
+  if (STOPWORDS.has(term) || BANNED_TOPIC_TERMS.has(term)) return false;
+  if (term.length < 3 || term.length > 32) return false;
+  if (/^\d+$/.test(term)) return false;
+  if (/^(19|20)\d{2}$/.test(term)) return false;
+  if (!/[a-z]/.test(term)) return false;
+  return true;
+}
+
+function normalizeTrendTerm(term: string) {
+  const cleaned = term.trim().replace(/^-+|-+$/g, "");
+  if (!cleaned) return "";
+
+  if (/^(19|20)\d{2}$/.test(cleaned)) return "";
+
+  if (cleaned.endsWith("ies") && cleaned.length > 4) return `${cleaned.slice(0, -3)}y`;
+  if (cleaned.endsWith("s") && !cleaned.endsWith("ss") && cleaned.length > 4) return cleaned.slice(0, -1);
+  return cleaned;
+}
+
+function tokenizeTrendText(text: string) {
   return text
     .toLowerCase()
-    .replace(/https?:\/\/\S+/g, "")
-    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[^a-z0-9\s-]/g, " ")
     .split(/\s+/)
-    .map((w) => w.trim())
-    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+    .map((w) => normalizeTrendTerm(w))
+    .filter((w) => isUsefulTrendTerm(w));
+}
+
+function formatTrendLabel(term: string) {
+  return term
+    .split(" ")
+    .map((part) => {
+      const upper = part.toUpperCase();
+      if (["nfl", "nba", "mlb", "nhl", "cfb", "f1", "ufc", "wwe", "mma"].includes(part)) {
+        return upper;
+      }
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ");
+}
+
+function extractKeywords(text: string) {
+  const tokens = tokenizeTrendText(text);
+  const phrases: string[] = [];
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const one = tokens[i];
+    if (!one) continue;
+
+    phrases.push(one);
+
+    const two = tokens.slice(i, i + 2);
+    if (two.length === 2) {
+      phrases.push(two.join(" "));
+    }
+
+    const three = tokens.slice(i, i + 3);
+    if (three.length === 3) {
+      phrases.push(three.join(" "));
+    }
+  }
+
+  return phrases.filter((term) => {
+    const parts = term.split(" ");
+    if (parts.length > 1 && parts.every((p) => STOPWORDS.has(p) || BANNED_TOPIC_TERMS.has(p))) {
+      return false;
+    }
+    return true;
+  });
 }
 
 export default function GeneralDashboard() {
@@ -309,29 +468,63 @@ export default function GeneralDashboard() {
       return now - d.getTime() <= 72 * 3600 * 1000;
     });
 
-    const counts = new Map<string, number>();
+    const totalHits = new Map<string, number>();
+    const distinctDocs72h = new Map<string, number>();
+    const distinctDocs24h = new Map<string, number>();
+
     for (const it of recent) {
+      const d = parseISO(it.published_at);
+      if (!d) continue;
+
       const words = extractKeywords(`${it.title} ${it.snippet ?? ""}`);
-      for (const w of words) counts.set(w, (counts.get(w) ?? 0) + 1);
+      const uniqueWords = [...new Set(words)];
+
+      for (const w of words) {
+        totalHits.set(w, (totalHits.get(w) ?? 0) + 1);
+      }
+
+      for (const w of uniqueWords) {
+        distinctDocs72h.set(w, (distinctDocs72h.get(w) ?? 0) + 1);
+        if (now - d.getTime() <= 24 * 3600 * 1000) {
+          distinctDocs24h.set(w, (distinctDocs24h.get(w) ?? 0) + 1);
+        }
+      }
     }
 
-    const in24 = recent.filter((n) => {
-      const d = parseISO(n.published_at);
-      return d ? now - d.getTime() <= 24 * 3600 * 1000 : false;
-    });
+    return [...distinctDocs72h.entries()]
+      .map(([term, docs72]) => {
+        const docs24 = distinctDocs24h.get(term) ?? 0;
+        const hits72 = totalHits.get(term) ?? docs72;
+        const parts = term.split(" ");
+        const isPhrase = parts.length >= 2;
+        const momentum = docs24 / Math.max(1, docs72);
+        const score =
+          docs72 * (isPhrase ? 1.25 : 0.65) +
+          docs24 * (isPhrase ? 1.9 : 1.15) +
+          hits72 * (isPhrase ? 0.22 : 0.08);
 
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
+        return {
+          term,
+          label: formatTrendLabel(term),
+          count: docs72,
+          c24: docs24,
+          hits72,
+          momentum,
+          score,
+          isPhrase,
+        };
+      })
+      .filter((t) => {
+        if (t.isPhrase) return t.count >= 2 || t.c24 >= 2;
+        return t.count >= 3 && t.c24 >= 1;
+      })
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (b.c24 !== a.c24) return b.c24 - a.c24;
+        return b.count - a.count;
+      })
       .slice(0, 12)
-      .map(([term, count]) => {
-        let c24 = 0;
-        for (const it of in24) {
-          const words = extractKeywords(`${it.title} ${it.snippet ?? ""}`);
-          if (words.includes(term)) c24 += 1;
-        }
-        const momentum = c24 / Math.max(1, count);
-        return { term, count, c24, momentum };
-      });
+      .map(({ score, hits72, isPhrase, ...rest }) => rest);
   }, [news]);
 
   const sportsCoverage = useMemo(() => {
@@ -748,11 +941,11 @@ export default function GeneralDashboard() {
                   ) : (
                     trends.map((t) => (
                       <div
-                        key={t.term}
+                        key={t.label}
                         className="rounded-xl border border-white/10 bg-black/25 p-3"
                       >
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-sm font-semibold">{t.term}</div>
+                          <div className="text-sm font-semibold">{t.label}</div>
                           <div className="text-xs text-white/70">
                             {t.count} hits • {t.c24} in 24h
                           </div>
