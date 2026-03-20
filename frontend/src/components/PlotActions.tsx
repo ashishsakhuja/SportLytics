@@ -22,6 +22,11 @@ type PlotActionsProps = {
 
 type ChartQueryResp = {
   answer: string;
+  route?: {
+    chart_id?: string;
+    chart_title?: string;
+    query_type?: string;
+  };
 };
 
 type SharedPlotPayload = {
@@ -147,6 +152,11 @@ export default function PlotActions({
         team: team || null,
         summary,
         question,
+        page_context: {
+          plot_url: plotUrl,
+          source: "plot-actions",
+          has_team_filter: Boolean(team),
+        },
       });
       setAnswer(res.answer || "Not enough data yet.");
     } catch (e: any) {
@@ -252,7 +262,7 @@ export default function PlotActions({
 
         <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
           <div className="text-xs uppercase tracking-[0.18em] text-white/45">Pulse response</div>
-          <div className="mt-2 text-sm leading-7 text-white/85">
+          <div className="mt-2 whitespace-pre-wrap text-sm leading-7 text-white/85">
             {answer || "Ask a chart-specific question to get an explanation grounded in this plot’s current summary."}
           </div>
         </div>

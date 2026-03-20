@@ -24,7 +24,7 @@ def _safe_float(value: Any) -> Optional[float]:
 
 
 def _team_label(row: Dict[str, Any]) -> str:
-    return row.get("label") or row.get("team_code") or "This team"
+    return row.get("team_code") or row.get("label") or "This team"
 
 
 def _overall_signal(row: Dict[str, Any]) -> float:
@@ -75,14 +75,18 @@ def storyline_caption(item: Dict[str, Any], sport: str) -> str:
             f"a shift of {_fmt_num(support.get('margin_delta'))} versus the prior five-game stretch."
         )
     if category == "turnovers":
-        return f"{team} has shifted the turnover battle by {_fmt_num(support.get('turnover_delta'))} recently."
+        return (
+            f"{team} has shifted the turnover battle by {_fmt_num(support.get('turnover_delta'))} recently."
+        )
     if category == "sos":
         return (
             f"{team}'s recent strength of schedule is {_fmt_num(support.get('recent_sos'))}, "
             f"compared with {_fmt_num(support.get('season_sos'))} for the full season."
         )
     if category == "split":
-        return f"{team} shows a home-away margin gap of {_fmt_num(support.get('home_away_gap'))}."
+        return (
+            f"{team} shows a home-away margin gap of {_fmt_num(support.get('home_away_gap'))}."
+        )
     return f"{team} is showing a notable recent signal."
 
 
@@ -94,65 +98,33 @@ def _answer_clarify(route: Dict[str, Any]) -> str:
     return route.get("message") or "Which team are you asking about?"
 
 
-def _answer_team_compare(items: List[Dict[str, Any]], route: Dict[str, Any], sport: str, metric_focus: str) -> str:
-    if not items:
+def _answer_team_compare(items: List[Dict[str, Any]], sport: str, metric_focus: str) -> str:
+    if len(items) < 2:
         return "Not enough data yet."
 
-    compare_kind = route.get("compare_kind")
-    seasons = route.get("requested_seasons") or []
+    a, b = items[0], items[1]
     stat_word = POINTS_LABEL.get(sport, "points")
 
-    if compare_kind == "teams_and_seasons":
-        by_team: Dict[str, List[Dict[str, Any]]] = {}
-        for row in items:
-            by_team.setdefault(row.get("team_code") or "UNK", []).append(row)
-        parts = []
-        for team_code, rows in list(by_team.items())[:3]:
-            rows = sorted(rows, key=lambda r: r.get("season") or 0)
-            first = rows[0]
-            last = rows[-1]
-            parts.append(
-                f"{_team_label(last)} moved from a margin Δ of {_fmt_num(first.get('margin_delta'))} in {first.get('season')} "
-                f"to {_fmt_num(last.get('margin_delta'))} in {last.get('season')}"
-            )
-        return "Across the requested teams and seasons, the clearest takeaway is: " + "; ".join(parts) + "."
-
-    if compare_kind == "seasons":
-        rows = sorted(items, key=lambda r: r.get("season") or 0)
-        if len(rows) >= 2:
-            first = rows[0]
-            last = rows[-1]
-            return (
-                f"{_team_label(last)} changed noticeably from {first.get('season')} to {last.get('season')}. "
-                f"Its recent margin delta moved from {_fmt_num(first.get('margin_delta'))} to {_fmt_num(last.get('margin_delta'))}, "
-                f"while offense shifted from {_fmt_num(first.get('offense_delta'))} to {_fmt_num(last.get('offense_delta'))} "
-                f"and defense from {_fmt_num(first.get('defense_delta'))} to {_fmt_num(last.get('defense_delta'))}."
-            )
-
-    if compare_kind == "teams":
-        a, b = items[0], items[1] if len(items) > 1 else (items[0], None)
-        if b is None:
-            return "Not enough data yet."
-        season_text = f" in {a.get('season')}" if a.get("season") else ""
-        if metric_focus == "offense":
-            return (
-                f"{_team_label(a)} has the stronger recent offensive signal{season_text}: {_fmt_num(a.get('last5_avg_pf'))} {stat_word} over the last five "
-                f"with a delta of {_fmt_num(a.get('offense_delta'))}, versus {_team_label(b)} at {_fmt_num(b.get('last5_avg_pf'))} "
-                f"and a delta of {_fmt_num(b.get('offense_delta'))}."
-            )
-        if metric_focus == "defense":
-            return (
-                f"{_team_label(a)} has the stronger recent defensive signal{season_text}: {_fmt_num(a.get('last5_avg_pa'))} {stat_word} allowed over the last five "
-                f"with a defensive delta of {_fmt_num(a.get('defense_delta'))}, versus {_team_label(b)} at {_fmt_num(b.get('last5_avg_pa'))} "
-                f"and a delta of {_fmt_num(b.get('defense_delta'))}."
-            )
+    if metric_focus == "offense":
         return (
-            f"{_team_label(a)} has the stronger recent profile{season_text}: margin Δ {_fmt_num(a.get('margin_delta'))}, "
-            f"recent record {a.get('recent_record')}, versus {_team_label(b)} at margin Δ {_fmt_num(b.get('margin_delta'))} "
-            f"with a recent record of {b.get('recent_record')}."
+            f"{_team_label(a)} is averaging {_fmt_num(a.get('last5_avg_pf'))} {stat_word} over its last five games, "
+            f"compared with {_fmt_num(a.get('prev5_avg_pf'))} in the previous five, a delta of {_fmt_num(a.get('offense_delta'))}. "
+            f"{_team_label(b)} is at {_fmt_num(b.get('last5_avg_pf'))} versus {_fmt_num(b.get('prev5_avg_pf'))}, "
+            f"for a delta of {_fmt_num(b.get('offense_delta'))}."
         )
 
-    return "Not enough data yet."
+    if metric_focus == "defense":
+        return (
+            f"{_team_label(a)} is allowing {_fmt_num(a.get('last5_avg_pa'))} {stat_word} over its last five games, "
+            f"versus {_fmt_num(a.get('prev5_avg_pa'))} in the previous five, a defensive delta of {_fmt_num(a.get('defense_delta'))}. "
+            f"{_team_label(b)} is allowing {_fmt_num(b.get('last5_avg_pa'))} versus {_fmt_num(b.get('prev5_avg_pa'))}, "
+            f"with a delta of {_fmt_num(b.get('defense_delta'))}."
+        )
+
+    return (
+        f"{_team_label(a)} has a recent margin delta of {_fmt_num(a.get('margin_delta'))} with a {_team_label(a)} recent record of {a.get('recent_record')}, "
+        f"while {_team_label(b)} is at {_fmt_num(b.get('margin_delta'))} with a recent record of {b.get('recent_record')}."
+    )
 
 
 def _answer_team_trend(items: List[Dict[str, Any]], sport: str) -> str:
@@ -160,9 +132,8 @@ def _answer_team_trend(items: List[Dict[str, Any]], sport: str) -> str:
         return "Not enough data yet."
     row = items[0]
     stat_word = POINTS_LABEL.get(sport, "points")
-    season_text = f" in {row.get('season')}" if row.get("season") else ""
     return (
-        f"{_team_label(row)}{season_text} is {row.get('recent_record')} over its last five games with an average margin of "
+        f"{_team_label(row)} is {row.get('recent_record')} over its last five games with an average margin of "
         f"{_fmt_num(row.get('last5_avg_margin'))}, compared with {_fmt_num(row.get('prev5_avg_margin'))} in the previous five. "
         f"It is averaging {_fmt_num(row.get('last5_avg_pf'))} {stat_word} and allowing {_fmt_num(row.get('last5_avg_pa'))}, "
         f"with offensive and defensive deltas of {_fmt_num(row.get('offense_delta'))} and {_fmt_num(row.get('defense_delta'))}."
@@ -319,7 +290,7 @@ def answer_for_route(route: Dict[str, Any], context: Dict[str, Any], sport: str)
     if query_type == "unknown":
         return route.get("message") or "Sorry, I can only analyze sports information."
     if query_type == "team_compare":
-        return _answer_team_compare(items, route, sport, metric_focus)
+        return _answer_team_compare(items, sport, metric_focus)
     if query_type == "team_trend":
         return _answer_team_trend(items, sport)
     if query_type == "stat_explain":
@@ -329,3 +300,93 @@ def answer_for_route(route: Dict[str, Any], context: Dict[str, Any], sport: str)
     if query_type == "trend_rank":
         return _answer_trend_rank(items, sport, metric_focus, direction)
     return "Not enough data yet."
+
+
+
+def _fmt_pct_rank(rank: Any) -> str:
+    try:
+        return str(int(rank))
+    except Exception:
+        return "N/A"
+
+
+def build_chart_narrative(
+    *,
+    chart_id: str,
+    chart_title: str,
+    sport: str,
+    season: int,
+    season_type: str,
+    team: str | None,
+    summary: Dict[str, Any],
+    question: str,
+) -> str:
+    if not summary:
+        return "Not enough data yet."
+
+    title = (chart_title or chart_id or "chart").strip()
+    q = (question or "").lower()
+    team_label = team or "This team"
+
+    def num(key: str) -> float | None:
+        try:
+            v = summary.get(key)
+            return None if v is None else float(v)
+        except Exception:
+            return None
+
+    pf = num("pf_avg") or num("avg_pf")
+    pa = num("pa_avg") or num("avg_pa")
+    lg_pf = num("league_pf_avg")
+    lg_pa = num("league_pa_avg")
+    offense_rank = summary.get("offense_rank")
+    defense_rank = summary.get("defense_rank")
+    last5 = num("last5") or num("last5_avg") or num("last5_avg_margin") or num("last5_pf")
+    prev5 = num("prev5") or num("prev5_avg") or num("prev5_avg_margin") or num("prev5_pf")
+    delta = num("delta")
+    home = num("home_avg") or num("home_avg_margin")
+    away = num("away_avg") or num("away_avg_margin")
+    gap = num("gap") or num("home_away_gap")
+    recent_sos = num("recent_sos")
+    season_sos = num("season_sos")
+
+    bullets: list[str] = []
+    opener = f"{title} points to a mixed signal right now."
+
+    if pf is not None and pa is not None:
+        offense_vs_avg = None if lg_pf is None else pf - lg_pf
+        defense_vs_avg = None if lg_pa is None else lg_pa - pa
+        if offense_vs_avg is not None and defense_vs_avg is not None:
+            opener = (
+                f"{team_label} looks stronger on {'both sides' if offense_vs_avg >= 0 and defense_vs_avg >= 0 else 'one side of the ball'} in this {title.lower()}."
+            )
+            bullets.append(f"Offense is at {_fmt_num(pf)} versus a league baseline of {_fmt_num(lg_pf)}.")
+            bullets.append(f"Defense is allowing {_fmt_num(pa)} versus a league baseline of {_fmt_num(lg_pa)}.")
+        else:
+            opener = f"{title} shows {team_label} at {_fmt_num(pf)} scored and {_fmt_num(pa)} allowed."
+        if offense_rank is not None or defense_rank is not None:
+            bullets.append(f"That maps to offense rank {_fmt_pct_rank(offense_rank)} and defense rank {_fmt_pct_rank(defense_rank)} if those rank fields are current.")
+
+    if last5 is not None and prev5 is not None:
+        trend_delta = delta if delta is not None else last5 - prev5
+        direction = "up" if trend_delta > 0 else ("down" if trend_delta < 0 else "flat")
+        if "why" in q or "trend" in q or not bullets:
+            opener = f"{title} is trending {direction} recently."
+        bullets.append(f"The recent window is {_fmt_num(last5)} versus {_fmt_num(prev5)} in the prior window, a swing of {_fmt_num(trend_delta)}.")
+
+    if home is not None and away is not None:
+        actual_gap = gap if gap is not None else home - away
+        bullets.append(f"The location split is {_fmt_num(home)} at home versus {_fmt_num(away)} away, a gap of {_fmt_num(actual_gap)}.")
+
+    if recent_sos is not None or season_sos is not None:
+        bullets.append(f"Schedule context is recent SOS {_fmt_num(recent_sos)} against season SOS {_fmt_num(season_sos)}.")
+
+    if not bullets:
+        preview = []
+        for k, v in list(summary.items())[:4]:
+            preview.append(f"{k}={v}")
+        opener = f"{title} has enough structure to answer the question, but the clearest read is still limited."
+        bullets.append("Available summary fields: " + ", ".join(preview) + ".")
+
+    body = "\n".join(f"- {b}" for b in bullets[:4])
+    return f"{opener}\n{body}".strip()

@@ -12,52 +12,66 @@ Your job is to explain sports data clearly, confidently, and naturally.
 
 Style:
 - Start with a direct answer to the user's question.
-- Then support it with 2 to 3 short bullet-style insights when data is available.
+- Then support it with 2 to 4 short bullet-style insights when data is available.
 - Sound like a sports analyst, not a robot.
 - Keep answers concise and easy to scan.
+- Prefer crisp comparisons and trend language over generic filler.
 
 Rules:
 - Use only the structured sports context provided.
 - Do not invent teams, scores, injuries, schedules, rumors, rankings, or statistics.
 - If the context is weak or missing, reply exactly: Not enough data yet.
 - If the question is non-sports, politely say you can only analyze sports information.
-- Respect the requested season, requested seasons, season type, and team context shown in the route metadata.
-""".strip()
-
-SMALLTALK_SYSTEM_PROMPT = """
-You are Pulse, the SportLytics assistant.
-
-You specialize in sports analytics. For greetings or casual small talk, respond naturally and briefly.
-For non-sports or out-of-scope questions, politely say that you mainly focus on sports analytics
-and invite the user to ask about teams, trends, rankings, offense, or defense.
-
-Keep the tone warm, human, and concise.
-Keep answers under 2 sentences.
-Do not invent sports stats.
+- Respect the requested season and season type shown in the context.
+- Never exceed 160 words.
 """.strip()
 
 
-def _safe_json(value: Any) -> str:
-    return json.dumps(value, indent=2, sort_keys=True, default=str)
+def _serialize_items(items: List[Dict[str, Any]]) -> str:
+    trimmed: List[Dict[str, Any]] = []
+    for row in items[:6]:
+        trimmed.append({
+            "team_code": row.get("team_code"),
+            "label": row.get("label"),
+            "recent_record": row.get("recent_record"),
+            "last5_avg_margin": row.get("last5_avg_margin"),
+            "prev5_avg_margin": row.get("prev5_avg_margin"),
+            "margin_delta": row.get("margin_delta"),
+            "last5_avg_pf": row.get("last5_avg_pf"),
+            "prev5_avg_pf": row.get("prev5_avg_pf"),
+            "offense_delta": row.get("offense_delta"),
+            "last5_avg_pa": row.get("last5_avg_pa"),
+            "prev5_avg_pa": row.get("prev5_avg_pa"),
+            "defense_delta": row.get("defense_delta"),
+            "recent_sos": row.get("recent_sos"),
+            "season_sos": row.get("season_sos"),
+        })
+    return json.dumps(trimmed, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _serialize_context(extra_context: Dict[str, Any] | None) -> str:
+    if not extra_context:
+        return "{}"
+    return json.dumps(extra_context, ensure_ascii=False, indent=2, sort_keys=True, default=str)
 
 
 def generate_smalltalk_response(question: str) -> str:
-    prompt = (question or "").strip()
-    if not prompt:
-        return "I’m Pulse, the SportLytics assistant. Ask me about team trends, offense, defense, or league rankings."
+    provider = get_pulse_provider()
+    prompt = f"""
+User message: {question}
+
+Respond as Pulse in 1 to 2 short sentences.
+- Be friendly and confident.
+- If the message is unrelated to sports analytics, say you can analyze sports trends, comparisons, rankings, and chart context.
+- No emojis.
+""".strip()
     try:
-        provider = get_pulse_provider()
-        text = provider.generate(
-            system_prompt=SMALLTALK_SYSTEM_PROMPT,
-            user_prompt=prompt,
-            temperature=0.7,
-            max_tokens=80,
-        )
-        if text.strip():
-            return text.strip()
+        return provider.generate_sync(system_prompt=PULSE_SYSTEM_PROMPT, user_prompt=prompt)
     except Exception:
-        pass
-    return "I’m Pulse, the SportLytics assistant. Ask me about team trends, offense, defense, or league rankings."
+        q = (question or "").lower()
+        if any(t in q for t in ["hi", "hello", "hey"]):
+            return "Hello — I’m Pulse, your SportLytics signal assistant. Ask me about trends, comparisons, rankings, or what stands out in a chart."
+        return "I can help with sports analytics questions, team trends, comparisons, rankings, and chart explanations."
 
 
 def rewrite_grounded_pulse_answer(
@@ -69,72 +83,41 @@ def rewrite_grounded_pulse_answer(
     route: Dict[str, Any],
     items: List[Dict[str, Any]],
     deterministic_answer: str,
+    extra_context: Dict[str, Any] | None = None,
 ) -> str:
-    if not deterministic_answer or deterministic_answer.strip() == "Not enough data yet.":
-        return "Not enough data yet."
-
-    compact_items = []
-    for row in items[:8]:
-        compact_items.append(
-            {
-                "team_code": row.get("team_code"),
-                "label": row.get("label"),
-                "season": row.get("season"),
-                "season_type": row.get("season_type"),
-                "recent_record": row.get("recent_record"),
-                "season_avg_margin": row.get("season_avg_margin"),
-                "margin_delta": row.get("margin_delta"),
-                "offense_delta": row.get("offense_delta"),
-                "defense_delta": row.get("defense_delta"),
-                "last5_avg_margin": row.get("last5_avg_margin"),
-                "prev5_avg_margin": row.get("prev5_avg_margin"),
-                "last5_avg_pf": row.get("last5_avg_pf"),
-                "prev5_avg_pf": row.get("prev5_avg_pf"),
-                "last5_avg_pa": row.get("last5_avg_pa"),
-                "prev5_avg_pa": row.get("prev5_avg_pa"),
-                "turnover_delta": row.get("turnover_delta"),
-                "home_away_gap": row.get("home_away_gap"),
-                "recent_sos": row.get("recent_sos"),
-            }
-        )
-
+    provider = get_pulse_provider()
     user_prompt = f"""
-Question:
+User question:
 {question}
 
 Sport context:
 - sport: {sport}
 - season: {season}
 - season_type: {season_type}
+- query_type: {route.get('query_type')}
+- metric_focus: {route.get('metric_focus')}
+- direction: {route.get('direction')}
+- teams: {route.get('teams')}
+- seasons: {route.get('seasons')}
 
-Route metadata:
-{_safe_json(route)}
+Structured team summaries:
+{_serialize_items(items)}
 
-Supporting items:
-{_safe_json(compact_items)}
+Additional contextual payload:
+{_serialize_context(extra_context)}
 
 Deterministic draft answer:
 {deterministic_answer}
 
-Rewrite the deterministic draft answer so it sounds premium and easy to scan.
-Requirements:
-- Give a direct answer first.
-- Then add 2 or 3 short bullet-style insights using hyphen bullets when useful.
-- Stay fully grounded in the supplied data.
-- Respect the requested season, requested seasons, and team context.
-- If multiple seasons are requested, mention the season years explicitly.
-- Do not add any facts beyond the route metadata, supporting items, and deterministic draft answer.
+Rewrite the deterministic answer into a polished Pulse response.
+Return:
+- 1 direct conclusion sentence
+- 2 to 4 concise bullet-style insights if the data supports them
+- at most 1 short closing sentence
+Do not add any facts beyond the structured context above.
 """.strip()
-
     try:
-        provider = get_pulse_provider()
-        text = provider.generate(
-            system_prompt=PULSE_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            temperature=0.35,
-            max_tokens=260,
-        )
-        cleaned = (text or "").strip()
-        return cleaned or deterministic_answer
+        text = provider.generate_sync(system_prompt=PULSE_SYSTEM_PROMPT, user_prompt=user_prompt)
+        return (text or "").strip() or deterministic_answer
     except Exception:
         return deterministic_answer
