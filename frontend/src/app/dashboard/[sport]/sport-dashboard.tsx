@@ -182,6 +182,37 @@ type NewsItem = {
   snippet?: string | null;
 };
 
+
+
+type OffenseDefenseTooltipProps = {
+  active?: boolean;
+  payload?: Array<{ payload?: { label?: string; team?: string; avg_pf?: number; avg_pa?: number; avg_margin?: number; gp?: number; isSelected?: boolean } }>;
+};
+
+function OffenseDefenseTooltip({ active, payload }: OffenseDefenseTooltipProps) {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) return null;
+
+  return (
+    <div className="rounded-xl border border-white/15 bg-black/90 px-3 py-2 text-sm text-white shadow-2xl backdrop-blur-sm">
+      <div className="flex items-center gap-2">
+        <div className="font-semibold">{point.label ?? point.team ?? "Team"}</div>
+        {point.isSelected ? (
+          <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cyan-200">
+            selected
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-2 space-y-1 text-xs text-white/75">
+        <div>Offense: {typeof point.avg_pf === "number" ? point.avg_pf.toFixed(1) : "—"}</div>
+        <div>Defense: {typeof point.avg_pa === "number" ? point.avg_pa.toFixed(1) : "—"}</div>
+        <div>Margin: {typeof point.avg_margin === "number" ? point.avg_margin.toFixed(1) : "—"}</div>
+        <div>Games: {typeof point.gp === "number" ? point.gp : "—"}</div>
+      </div>
+    </div>
+  );
+}
+
 function niceTeamLabel(r: {
   team_code: string;
   name?: string | null;
@@ -534,8 +565,10 @@ export default function SportDashboard({ sport }: { sport: string }) {
         avg_pa: Number(r.avg_pa),
         avg_margin: r.avg_margin ?? 0,
         gp: r.gp,
-      }));
-  }, [summary]);
+        isSelected: r.team_code === team,
+      }))
+      .sort((a, b) => Number(b.isSelected) - Number(a.isSelected));
+  }, [summary, team]);
 
   const formSeries = useMemo(() => {
     if (!form) return [];
@@ -1211,21 +1244,37 @@ const aiScoreDistributionSummary = useMemo(() => {
                           />
                           <Tooltip
                             cursor={{ stroke: "rgba(255,255,255,0.15)" }}
-                            contentStyle={{
-                              background: "rgba(0,0,0,0.9)",
-                              border: "1px solid rgba(255,255,255,0.15)",
-                              borderRadius: 12,
-                              color: "white",
-                            }}
-                            formatter={(v: any, k: any) => [v, k]}
-                            labelFormatter={(_, payload: any) =>
-                              payload?.[0]?.payload?.label ?? ""
-                            }
+                            content={<OffenseDefenseTooltip />}
                           />
                           <Scatter
                             name="Teams"
                             data={scatterData}
-                            fill="rgba(255,255,255,0.7)"
+                            shape={(props: any) => {
+                              const { cx, cy, payload } = props;
+                              const isSelected = !!payload?.isSelected;
+                              return (
+                                <g>
+                                  {isSelected ? (
+                                    <circle
+                                      cx={cx}
+                                      cy={cy}
+                                      r={11}
+                                      fill="rgba(34,211,238,0.14)"
+                                      stroke="rgba(34,211,238,0.35)"
+                                      strokeWidth={1}
+                                    />
+                                  ) : null}
+                                  <circle
+                                    cx={cx}
+                                    cy={cy}
+                                    r={isSelected ? 6.5 : 5}
+                                    fill={isSelected ? "rgba(34,211,238,0.95)" : "rgba(255,255,255,0.78)"}
+                                    stroke={isSelected ? "rgba(103,232,249,1)" : "rgba(255,255,255,0.18)"}
+                                    strokeWidth={isSelected ? 2 : 1}
+                                  />
+                                </g>
+                              );
+                            }}
                           />
                         </ScatterChart>
                       </ResponsiveContainer>
