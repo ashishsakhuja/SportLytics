@@ -69,6 +69,22 @@ type PulseGeneratedPlot = {
   share_body?: string | null;
 };
 
+type RelatedNewsItem = {
+  id: number;
+  title: string;
+  source: string;
+  sport: string;
+  published_at?: string | null;
+  url: string;
+  snippet?: string | null;
+  impact_tags?: string[];
+  impact_direction?: "positive" | "negative" | "neutral";
+  impact_score?: number;
+  impact_summary?: string;
+  side_of_ball?: string;
+  move_type?: string;
+};
+
 type ChatResp = {
   assistant_name: string;
   answer: string;
@@ -79,6 +95,7 @@ type ChatResp = {
   generated_plot?: PulseGeneratedPlot | null;
   prediction?: Record<string, unknown> | null;
   prediction_disclaimer?: string | null;
+  related_news?: RelatedNewsItem[];
 };
 
 type ChatMessage = {
@@ -88,6 +105,7 @@ type ChatMessage = {
   supporting?: SupportingItem[];
   generatedPlot?: PulseGeneratedPlot | null;
   predictionDisclaimer?: string | null;
+  relatedNews?: RelatedNewsItem[];
 };
 
 type SavedSession = {
@@ -386,6 +404,7 @@ export default function SignalCenterPage() {
         supporting: resp.supporting_items,
         generatedPlot: resp.generated_plot || null,
         predictionDisclaimer: resp.prediction_disclaimer || null,
+        relatedNews: resp.related_news || [],
       };
       setMessages((prev) => [...prev, assistantMessage]);
 
@@ -570,6 +589,50 @@ export default function SignalCenterPage() {
                               </div>
                             </div>
                           ))}
+                        </div>
+                      ) : null}
+
+                      {msg.relatedNews?.length ? (
+                        <div className="mt-4 rounded-2xl border border-cyan-400/15 bg-cyan-500/5 p-3">
+                          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100/75">
+                            News context Pulse used
+                          </div>
+                          <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+                            {msg.relatedNews.slice(0, 4).map((item) => (
+                              <a
+                                key={`${msg.id}-news-${item.id}`}
+                                href={item.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="rounded-2xl border border-white/10 bg-black/25 p-3 transition hover:border-cyan-300/30 hover:bg-black/35"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-xs font-semibold text-white">{item.source}</span>
+                                  {item.impact_tags?.map((tag) => (
+                                    <span
+                                      key={`${item.id}-${tag}`}
+                                      className="rounded-full border border-cyan-300/15 bg-cyan-400/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-cyan-100/80"
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                                <div className="mt-2 text-sm font-semibold text-white/95">{item.title}</div>
+                                <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-white/45">
+                                  {item.impact_direction ? (
+                                    <span className={`rounded-full border px-2 py-0.5 ${item.impact_direction === "positive" ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-100/85" : item.impact_direction === "negative" ? "border-amber-300/20 bg-amber-400/10 text-amber-100/85" : "border-white/10 bg-white/5 text-white/55"}`}>
+                                      {item.impact_direction}
+                                    </span>
+                                  ) : null}
+                                  {item.side_of_ball ? <span>{item.side_of_ball}</span> : null}
+                                  {item.move_type ? <span>• {item.move_type}</span> : null}
+                                  {typeof item.impact_score === "number" ? <span>• impact {item.impact_score.toFixed(1)}</span> : null}
+                                </div>
+                                {item.impact_summary ? <div className="mt-1 text-xs leading-6 text-cyan-100/75">{item.impact_summary}</div> : null}
+                                {item.snippet ? <div className="mt-1 text-xs leading-6 text-white/60">{item.snippet}</div> : null}
+                              </a>
+                            ))}
+                          </div>
                         </div>
                       ) : null}
 

@@ -13,6 +13,8 @@ QUERY_TYPES = {
     "trend_rank",
     "stat_explain",
     "predictive",
+    "news_summary",
+    "news_impact",
     "smalltalk",
     "unknown",
     "clarify_team",
@@ -123,6 +125,17 @@ PREDICTIVE_TERMS = {
     "how do we think",
     "what do we think",
 }
+NEWS_TERMS = {
+    "news", "headline", "headlines", "report", "reports", "rumor", "rumors", "update", "updates",
+    "injury", "injuries", "availability", "status", "inactive", "out", "questionable", "doubtful",
+    "trade", "trades", "traded", "transaction", "transactions", "waived", "released", "signed",
+    "lineup", "starter", "starters", "suspended", "suspension", "return", "returns", "returning", "activated"
+}
+IMPACT_TERMS = {
+    "impact", "affect", "affects", "affecting", "matter", "matters", "difference", "changes", "changed",
+    "because of", "based on the news", "because of injuries", "because of trades", "injury impact",
+    "trade impact", "availability impact", "roster impact", "lineup impact"
+}
 
 SPORTS_INTENT_TERMS = {
     "team",
@@ -217,11 +230,6 @@ def extract_requested_seasons(question: str, default_season: int | None = None) 
     return [int(default_season)] if default_season is not None else []
 
 
-def extract_requested_season(question: str, default_season: int | None = None) -> int | None:
-    seasons = extract_requested_seasons(question, default_season)
-    return seasons[0] if seasons else default_season
-
-
 def extract_requested_season_type(question: str, default_season_type: str | None = None) -> str | None:
     text = (question or "").lower().strip()
     if any(p in text for p in {"playoff", "playoffs", "postseason", "post season"}):
@@ -306,12 +314,18 @@ def route_query(
     has_rank = _contains_any(text, RANK_TERMS)
     has_trend = _contains_any(text, TREND_TERMS)
     has_explain = _contains_any(text, EXPLAIN_TERMS)
-    has_predictive = _contains_any(text, PREDICTIVE_TERMS)
     has_threshold = THRESHOLD_PATTERN.search(text) is not None
     has_multi_team = len(teams) >= 2
     has_multi_season = len(requested_seasons) >= 2
+    wants_prediction = _contains_any(text, PREDICTIVE_TERMS)
+    wants_news = _contains_any(text, NEWS_TERMS)
+    wants_impact = _contains_any(text, IMPACT_TERMS)
 
-    if has_predictive and (teams or has_threshold or has_sports_intent):
+    if wants_news and wants_impact and has_sports_intent:
+        query_type = "news_impact"
+    elif wants_news and has_sports_intent:
+        query_type = "news_summary"
+    elif wants_prediction:
         query_type = "predictive"
     elif has_compare or has_multi_team or has_multi_season:
         query_type = "team_compare"
@@ -341,7 +355,7 @@ def route_query(
     else:
         return {
             "query_type": "unknown",
-            "message": "Sorry, I can only analyze sports information. Try asking about team trends, offense, defense, rankings, or projections.",
+            "message": "Sorry, I can only analyze sports information. Try asking about team trends, offense, defense, rankings, predictions, or news impact.",
             "raw_question": raw_question,
             "requested_season": requested_season,
             "requested_season_type": requested_season_type,
@@ -380,5 +394,7 @@ def route_query(
         "requested_season_type": requested_season_type,
         "requested_seasons": requested_seasons,
         "compare_kind": compare_kind,
-        "predictive": has_predictive,
+        "wants_news": wants_news,
+        "wants_news_impact": wants_impact,
+        "wants_prediction": wants_prediction,
     }

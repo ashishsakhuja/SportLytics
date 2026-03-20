@@ -5,7 +5,11 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
+
+from app.models import ContentItem
+from app.services.team_aliases import TEAM_ALIASES
 
 from app.services.pulse_narrative import answer_for_route, storyline_caption
 from app.services.pulse_query_router import route_query
@@ -24,6 +28,28 @@ STORYLINES_TTL_SECONDS = int(os.getenv("AI_STORYLINES_TTL_SECONDS", "900"))
 PREDICTION_DISCLAIMER = (
     "Prediction note: this is a trend-based estimate using recent SportLytics data, not a guarantee or betting advice."
 )
+INJURY_HINTS = (
+    "injury", "injuries", "questionable", "doubtful", "out", "inactive", "ir", "day-to-day", "sidelined",
+    "limited", "game-time decision", "concussion", "hamstring", "ankle", "knee", "wrist", "illness",
+    "suspended", "suspension", "unavailable", "placed on injured reserve", "scratched", "absence", "absent"
+)
+
+TRADE_TERMS = (
+    "trade", "traded", "acquired", "acquire", "deal", "dealt", "waived", "released", "signed", "signs",
+    "activates", "activated", "recalls", "recalled", "promoted", "called up", "returns", "returning", "back in the lineup"
+)
+
+OFFENSE_HINTS = {
+    "qb", "quarterback", "rb", "wr", "receiver", "tight end", "lineman", "offense", "offensive",
+    "scorer", "scores", "goal scorer", "top scorer", "shot creator", "playmaker", "guard", "forward",
+    "bat", "batter", "hitter", "slugger", "lineup", "starter", "points", "goals", "runs"
+}
+
+DEFENSE_HINTS = {
+    "defense", "defensive", "corner", "cornerback", "safety", "linebacker", "pass rusher", "edge",
+    "goalie", "goaltender", "defenseman", "center back", "pitcher", "rotation", "bullpen", "closer",
+    "rim protector", "rebounder", "stops", "blocks", "saves"
+}
 
 
 def _cache_get(key: str) -> Optional[str]:
@@ -467,6 +493,314 @@ def _answer_predictive(route: Dict[str, Any], sport: str, items: List[Dict[str, 
     return {"answer": answer, "prediction": {"ranked": [{"team_code": r["team_code"], **(r.get("prediction") or {})} for r in top]}}
 
 
+
+
+def _news_aliases_for_codes(team_codes: List[str]) -> Dict[str, List[str]]:
+    out: Dict[str, List[str]] = {}
+    for code in team_codes:
+        aliases = [alias for alias, mapped in TEAM_ALIASES.items() if mapped == code]
+        aliases.extend([code, code.lower()])
+        # preserve order, trim long alias sets
+        uniq: List[str] = []
+        for a in aliases:
+            a = str(a or '').strip()
+            if a and a.lower() not in {x.lower() for x in uniq}:
+                uniq.append(a)
+        out[code] = uniq[:12]
+    return out
+
+
+def _contains_phrase(text: str, phrases: tuple[str, ...] | set[str]) -> bool:
+    return any(p in text for p in phrases)
+
+
+def _news_side_of_ball(hay: str) -> str:
+    offense_hits = sum(1 for term in OFFENSE_HINTS if term in hay)
+    defense_hits = sum(1 for term in DEFENSE_HINTS if term in hay)
+    if offense_hits and defense_hits:
+        return "both"
+    if offense_hits:
+        return "offense"
+    if defense_hits:
+        return "defense"
+    return "overall"
+
+
+def _news_move_type(hay: str) -> str:
+    if any(term in hay for term in ("suspended", "suspension", "ruled out", "out for season")):
+        return "absence"
+    if any(term in hay for term in ("questionable", "doubtful", "day-to-day", "game-time decision", "limited")):
+        return "uncertain"
+    if any(term in hay for term in ("returns", "returning", "activated", "back in the lineup", "cleared", "reinstated")):
+        return "return"
+    if any(term in hay for term in ("trade", "traded", "acquired", "dealt", "waived", "released", "signed", "promoted", "recalled")):
+        return "transaction"
+    if _contains_phrase(hay, INJURY_HINTS):
+        return "injury"
+    return "news"
+
+
+def _estimate_news_item_impact(item: ContentItem) -> Dict[str, Any]:
+    title = str(item.title or '').strip()
+    snippet = str(item.summary or item.snippet or '').strip()
+    hay = f"{title} {snippet}".lower()
+
+    side = _news_side_of_ball(hay)
+    move_type = _news_move_type(hay)
+
+    direction = "neutral"
+    score = 0.0
+    tags: List[str] = []
+
+    severe_negative = any(term in hay for term in ("out for season", "torn", "surgery", "suspended", "placed on injured reserve", "ruled out"))
+    medium_negative = _contains_phrase(hay, INJURY_HINTS) or any(term in hay for term in ("waived", "released", "traded away", "dealt away"))
+    positive_return = any(term in hay for term in ("returns", "returning", "activated", "back in the lineup", "cleared", "reinstated"))
+    positive_add = any(term in hay for term in ("acquired", "trade for", "traded for", "signed", "recalls", "recalled", "promoted", "called up"))
+    uncertain = any(term in hay for term in ("questionable", "doubtful", "day-to-day", "game-time decision", "limited"))
+
+    if severe_negative:
+        direction = "negative"
+        score = 1.6
+        tags.append("major absence risk")
+    elif medium_negative:
+        direction = "negative"
+        score = 1.0
+        tags.append("availability concern")
+
+    if uncertain:
+        if score < 0.8:
+            score = 0.8
+        if direction == "neutral":
+            direction = "negative"
+        tags.append("uncertain status")
+
+    if positive_return:
+        direction = "positive"
+        score = max(score, 1.0 if move_type == "return" else 0.8)
+        tags.append("return boost")
+
+    if positive_add:
+        if "waived" in hay or "released" in hay:
+            direction = "negative"
+            score = max(score, 0.8)
+        else:
+            direction = "positive"
+            score = max(score, 0.9)
+        tags.append("roster move")
+
+    if any(term in hay for term in ("trade", "traded", "acquired", "dealt")) and "roster move" not in tags:
+        tags.append("roster move")
+
+    if move_type in {"injury", "absence", "uncertain"} and "injury watch" not in tags:
+        tags.append("injury watch")
+
+    if side == "offense":
+        tags.append("offense signal")
+    elif side == "defense":
+        tags.append("defense signal")
+    elif side == "both":
+        tags.append("two-way signal")
+
+    summary = "General recent headline."
+    if direction == "negative":
+        summary = f"Possible downside from {move_type.replace('_', ' ')} news"
+    elif direction == "positive":
+        summary = f"Possible lift from {move_type.replace('_', ' ')} news"
+    elif uncertain:
+        summary = "Status uncertainty could matter"
+
+    return {
+        "impact_tags": list(dict.fromkeys(tags)),
+        "impact_score": _round(score, 2) or 0.0,
+        "impact_direction": direction,
+        "move_type": move_type,
+        "side_of_ball": side,
+        "impact_summary": summary,
+    }
+
+
+def _build_news_impact_profile(related_news: List[Dict[str, Any]]) -> Dict[str, Any]:
+    profile = {
+        "offense_delta": 0.0,
+        "defense_delta": 0.0,
+        "margin_delta": 0.0,
+        "confidence_penalty": 0.0,
+        "volatility": 0.0,
+        "reasons": [],
+    }
+    for item in related_news:
+        score = _safe_float(item.get("impact_score")) or 0.0
+        direction = str(item.get("impact_direction") or "neutral")
+        side = str(item.get("side_of_ball") or "overall")
+        move_type = str(item.get("move_type") or "news")
+        sign = 1.0 if direction == "positive" else (-1.0 if direction == "negative" else 0.0)
+        scaled = min(1.8, score)
+
+        if side in {"offense", "both"}:
+            profile["offense_delta"] += sign * scaled
+        if side in {"defense", "both"}:
+            profile["defense_delta"] += sign * scaled
+        if side == "overall":
+            profile["margin_delta"] += sign * scaled * 0.7
+
+        # volatility and confidence penalties rise with uncertain availability and transactions
+        if move_type in {"injury", "absence", "uncertain", "transaction"}:
+            profile["confidence_penalty"] += min(0.05, score * 0.03)
+            profile["volatility"] += min(0.25, score * 0.12)
+
+        if sign != 0 and len(profile["reasons"]) < 4:
+            profile["reasons"].append(str(item.get("impact_summary") or item.get("title") or "headline factor"))
+
+    for key in ("offense_delta", "defense_delta", "margin_delta"):
+        profile[key] = max(-3.0, min(3.0, round(profile[key], 2)))
+    profile["confidence_penalty"] = round(min(0.14, profile["confidence_penalty"]), 2)
+    profile["volatility"] = round(min(0.6, profile["volatility"]), 2)
+    return profile
+
+
+def _serialize_news_item(item: ContentItem) -> Dict[str, Any]:
+    title = str(item.title or '').strip()
+    snippet = str(item.summary or item.snippet or '').strip()
+    impact = _estimate_news_item_impact(item)
+    return {
+        'id': item.id,
+        'title': title,
+        'source': item.source,
+        'sport': item.sport,
+        'published_at': item.published_at.isoformat() if item.published_at else None,
+        'url': item.url,
+        'snippet': snippet[:260] if snippet else None,
+        **impact,
+    }
+
+
+def _fetch_related_news(db: Session, *, sport: str, route: Dict[str, Any], team_code: Optional[str], limit: int = 5) -> List[Dict[str, Any]]:
+    teams = list(dict.fromkeys((route.get('teams') or []) + ([team_code] if team_code else [])))
+    query = db.query(ContentItem).filter(ContentItem.sport == sport).order_by(ContentItem.published_at.desc())
+
+    if teams:
+        alias_map = _news_aliases_for_codes(teams)
+        conditions = []
+        for code, aliases in alias_map.items():
+            try:
+                conditions.append(ContentItem.teams.any(code))
+            except Exception:
+                pass
+            for alias in aliases:
+                like = f"%{alias}%"
+                conditions.extend([
+                    ContentItem.team.ilike(like),
+                    ContentItem.title.ilike(like),
+                    ContentItem.snippet.ilike(like),
+                    ContentItem.summary.ilike(like),
+                ])
+        if conditions:
+            query = query.filter(sa.or_(*conditions))
+
+    rows = query.limit(max(1, min(8, limit))).all()
+    return [_serialize_news_item(row) for row in rows]
+
+
+def _build_news_summary_answer(route: Dict[str, Any], items: List[Dict[str, Any]], related_news: List[Dict[str, Any]]) -> str:
+    if not related_news:
+        return 'I could not find enough recent news context for that team or league view yet.'
+    prefix = 'Here are the biggest recent headlines I found'
+    if route.get('teams'):
+        prefix = f"Here are the main recent headlines around {route['teams'][0]}"
+    bullets = []
+    for n in related_news[:3]:
+        bits = [n['title']]
+        if n.get('impact_tags'):
+            bits.append(f"({', '.join(n['impact_tags'])})")
+        if n.get('source'):
+            bits.append(f"— {n['source']}")
+        bullets.append(' '.join(bits))
+    answer = prefix + ': ' + '; '.join(bullets) + '.'
+    if items:
+        row = items[0]
+        answer += (
+            f" In the numbers, the current trend snapshot still has {row.get('label') or row.get('team_code')} at "
+            f"{row.get('recent_record')} lately with margin Δ {row.get('margin_delta')}."
+        )
+    return answer
+
+
+def _build_news_impact_answer(route: Dict[str, Any], items: List[Dict[str, Any]], related_news: List[Dict[str, Any]], sport: str) -> str:
+    if not items:
+        return _build_news_summary_answer(route, items, related_news)
+    row = items[0]
+    stat_word = POINTS_LABEL.get(sport, 'points')
+    trend_piece = (
+        f"In the game data, the recent shift is from {row.get('prev5_avg_pf')} to {row.get('last5_avg_pf')} {stat_word} scored "
+        f"and from {row.get('prev5_avg_pa')} to {row.get('last5_avg_pa')} allowed."
+    )
+    if not related_news:
+        return f"I can explain the historical trend, but I did not find enough recent injury or roster context yet. {trend_piece}"
+    profile = _build_news_impact_profile(related_news)
+    drivers = '; '.join(str(x) for x in (profile.get('reasons') or [])[:3])
+    return (
+        "The news matters here because availability and roster movement can shift how we interpret the recent sample. "
+        + trend_piece
+        + f" My lightweight impact layer reads those headlines as roughly offense {profile.get('offense_delta', 0):+}, defense {profile.get('defense_delta', 0):+}, "
+        + f"with added volatility {profile.get('volatility', 0)}. Relevant drivers: {drivers}."
+    )
+
+
+def _apply_news_to_prediction(prediction: Dict[str, Any], related_news: List[Dict[str, Any]]) -> Dict[str, Any]:
+    adjusted = dict(prediction or {})
+    profile = _build_news_impact_profile(related_news)
+    adjusted['news_adjustment'] = 'none'
+    adjusted['news_profile'] = profile
+    if not related_news:
+        return adjusted
+
+    offense_delta = float(profile.get('offense_delta') or 0.0)
+    defense_delta = float(profile.get('defense_delta') or 0.0)
+    margin_delta = float(profile.get('margin_delta') or 0.0)
+
+    if adjusted.get('projected_pf') is not None:
+        adjusted['projected_pf'] = _round((adjusted.get('projected_pf') or 0.0) + offense_delta + margin_delta * 0.35)
+    if adjusted.get('projected_pa') is not None:
+        adjusted['projected_pa'] = _round((adjusted.get('projected_pa') or 0.0) - defense_delta - margin_delta * 0.2)
+    if adjusted.get('projected_margin') is not None:
+        adjusted['projected_margin'] = _round((adjusted.get('projected_margin') or 0.0) + offense_delta + defense_delta + margin_delta)
+
+    confidence = dict(adjusted.get('confidence') or {})
+    if confidence.get('score') is not None:
+        confidence['score'] = round(max(0.32, float(confidence['score']) - float(profile.get('confidence_penalty') or 0.0)), 2)
+        confidence['label'] = 'low' if confidence['score'] < 0.52 else ('medium' if confidence['score'] < 0.68 else 'high')
+    adjusted['confidence'] = confidence
+    adjusted['news_adjustment'] = 'availability_trade_layer'
+    return adjusted
+
+
+def _prediction_answer_with_news(route: Dict[str, Any], sport: str, items: List[Dict[str, Any]], related_news: List[Dict[str, Any]]) -> Dict[str, Any]:
+    base = _answer_predictive(route, sport, items)
+    prediction = base.get('prediction')
+    if route.get('teams') and isinstance(prediction, dict):
+        prediction = _apply_news_to_prediction(prediction, related_news)
+        team_label = prediction.get('team_label') or (items[0].get('label') if items else 'This team')
+        stat_word = POINTS_LABEL.get(sport, 'points')
+        news_note = ''
+        if related_news:
+            tags = []
+            if any('injury watch' in (n.get('impact_tags') or []) for n in related_news):
+                tags.append('injury news')
+            if any('roster move' in (n.get('impact_tags') or []) for n in related_news):
+                tags.append('roster movement')
+            if tags:
+                news_note = f" Recent news adds some caution here, especially around {' and '.join(tags)}."
+        answer = (
+            f"My trend-based read is that {team_label} should be around {prediction.get('projected_pf')} {stat_word} scored, "
+            f"{prediction.get('projected_pa')} allowed, and roughly {prediction.get('projected_margin')} in projected margin."
+            f" Confidence is {(prediction.get('confidence') or {}).get('label', 'medium')} "
+            f"({(prediction.get('confidence') or {}).get('score', '—')}).{news_note} {PREDICTION_DISCLAIMER}"
+        )
+        return {'answer': answer, 'prediction': prediction}
+    if related_news and isinstance(prediction, dict) and prediction.get('ranked'):
+        answer = base['answer'] + ' I also checked recent headlines so any active injury or roster noise can temper those rankings.'
+        return {'answer': answer, 'prediction': prediction}
+    return base
 def answer_query(
     db: Session,
     *,
@@ -498,6 +832,7 @@ def answer_query(
             "route": None,
             "generated_plot": None,
             "prediction": None,
+            "related_news": [],
         }
 
     pre_route = route_query(
@@ -513,7 +848,7 @@ def answer_query(
     question_key = _stable_hash(question.lower())
     history_key = _stable_hash(json.dumps(conversation_history, sort_keys=True, default=str)) if conversation_history else "nohist"
     session_key = (session_id or "nosession").strip() or "nosession"
-    cache_key = f"ai:query:v8:{sport}:{resolved_season}:{resolved_season_type}:{team_code or 'all'}:{session_key}:{history_key}:{question_key}"
+    cache_key = f"ai:query:v9:{sport}:{resolved_season}:{resolved_season_type}:{team_code or 'all'}:{session_key}:{history_key}:{question_key}"
     cached = _cache_get(cache_key)
     if cached:
         try:
@@ -542,6 +877,7 @@ def answer_query(
             },
             "generated_plot": None,
             "prediction": None,
+            "related_news": [],
         }
 
     known_codes = {s["team_code"] for s in summaries}
@@ -558,6 +894,8 @@ def answer_query(
 
     context = _build_query_context(summaries, route=route)
     items = context.get("items") or []
+    should_fetch_news = bool(route.get("wants_news") or route.get("wants_prediction") or route.get("query_type") in {"news_summary", "news_impact", "predictive"})
+    related_news = _fetch_related_news(db, sport=sport, route=route, team_code=team_code, limit=5) if should_fetch_news else []
 
     if route["query_type"] in {"smalltalk", "unknown"}:
         result = {
@@ -568,6 +906,7 @@ def answer_query(
             "route": route,
             "generated_plot": None,
             "prediction": None,
+            "related_news": [],
         }
         _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
         return result
@@ -581,6 +920,7 @@ def answer_query(
             "route": route,
             "generated_plot": None,
             "prediction": None,
+            "related_news": [],
         }
         _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
         return result
@@ -613,9 +953,35 @@ def answer_query(
 
     prediction_payload = None
     if route["query_type"] == "predictive":
-        pred = _answer_predictive(route, sport, items)
+        pred = _prediction_answer_with_news(route, sport, items, related_news)
         answer = pred["answer"]
         prediction_payload = pred.get("prediction")
+    elif route["query_type"] == "news_summary":
+        answer = _build_news_summary_answer(route, items, related_news)
+        answer = rewrite_grounded_pulse_answer(
+            question=question,
+            sport=sport,
+            season=resolved_season,
+            season_type=resolved_season_type,
+            route=route,
+            items=items,
+            deterministic_answer=answer,
+            conversation_history=conversation_history,
+            session_id=session_id,
+        )
+    elif route["query_type"] == "news_impact":
+        answer = _build_news_impact_answer(route, items, related_news, sport)
+        answer = rewrite_grounded_pulse_answer(
+            question=question,
+            sport=sport,
+            season=resolved_season,
+            season_type=resolved_season_type,
+            route=route,
+            items=items,
+            deterministic_answer=answer,
+            conversation_history=conversation_history,
+            session_id=session_id,
+        )
     else:
         answer = answer_for_route(route, context, sport)
         if not answer:
@@ -651,6 +1017,7 @@ def answer_query(
         "generated_plot": generated_plot,
         "prediction": prediction_payload,
         "prediction_disclaimer": PREDICTION_DISCLAIMER if route["query_type"] == "predictive" else None,
+        "related_news": related_news[:5],
     }
     _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
     return result
