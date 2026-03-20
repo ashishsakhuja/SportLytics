@@ -15,7 +15,7 @@ class OpenAIProvider(PulseLLMProvider):
         self.client = OpenAI(api_key=self.api_key)
         self.model = os.getenv("OPENAI_PULSE_MODEL", "gpt-4o-mini")
 
-    def generate(self, *, system_prompt: str, user_prompt: str, temperature: float = 0.3, max_tokens: int = 220) -> str:
+    def generate(self, *, system_prompt: str, user_prompt: str, temperature: float = 0.35, max_tokens: int = 320) -> str:
         resp = self.client.chat.completions.create(
             model=self.model,
             temperature=temperature,

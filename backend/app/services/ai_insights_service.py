@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.services.pulse_narrative import answer_for_route, build_chart_narrative, storyline_caption
 from app.services.pulse_query_router import route_query
-from app.services.pulse_llm import generate_smalltalk_response, rewrite_grounded_pulse_answer
+from app.services.pulse_llm import generate_smalltalk_response, rewrite_grounded_pulse_answer_with_meta
 from app.services.pulse_trend_engine import (
     compute_league_trend_summaries,
     compute_team_trend_summary,
@@ -21,6 +21,7 @@ from app.services.redis_cache import get_redis
 POINTS_LABEL = {"nfl": "points", "nba": "points", "mlb": "runs", "nhl": "goals"}
 QUERY_TTL_SECONDS = int(os.getenv("AI_QUERY_TTL_SECONDS", "900"))
 STORYLINES_TTL_SECONDS = int(os.getenv("AI_STORYLINES_TTL_SECONDS", "900"))
+PULSE_INCLUDE_META = os.getenv("PULSE_INCLUDE_META", "1").strip().lower() not in {"0", "false", "no"}
 
 
 def _cache_get(key: str) -> Optional[str]:
@@ -47,6 +48,30 @@ def _cache_set(key: str, value: str, ttl: int) -> None:
 
 def _stable_hash(text: str) -> str:
     return hashlib.md5(text.encode("utf-8")).hexdigest()
+
+
+def _stable_json_hash(payload: Dict[str, Any]) -> str:
+    dumped = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return _stable_hash(dumped)
+
+
+def _meta_payload(*, cache_status: str, provider: str = "none", fallback_used: bool = False, rewrite_applied: bool = False, source: str = "deterministic", note: str | None = None) -> Dict[str, Any]:
+    meta = {
+        "cache_status": cache_status,
+        "provider": provider,
+        "fallback_used": fallback_used,
+        "rewrite_applied": rewrite_applied,
+        "source": source,
+    }
+    if note:
+        meta["note"] = note
+    return meta
+
+
+def _attach_meta(result: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]:
+    if PULSE_INCLUDE_META:
+        result["meta"] = meta
+    return result
 
 
 def build_team_summaries(
@@ -240,12 +265,6 @@ def _fallback_answer(context: Dict[str, Any], route: Dict[str, Any]) -> str:
     )
 
 
-
-def _stable_json_hash(payload: Dict[str, Any]) -> str:
-    dumped = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return _stable_hash(dumped)
-
-
 def _merge_context_payload(
     *,
     page_context: Dict[str, Any] | None = None,
@@ -278,18 +297,20 @@ def answer_chart_query(
     question = (question or "").strip()
 
     if not question or not summary:
-        return {
+        return _attach_meta({
             "assistant_name": "Pulse",
             "answer": "Not enough data yet.",
             "supporting_items": [],
             "route": {"query_type": "chart_explain", "chart_id": chart_id, "chart_title": chart_title},
-        }
+        }, _meta_payload(cache_status="skip", source="deterministic", note="missing-question-or-summary"))
 
-    cache_key = f"ai:chart-query:v2:{sport}:{season}:{season_type}:{team_code or 'all'}:{chart_id}:{_stable_json_hash(summary)}:{_stable_hash(question.lower())}"
+    cache_key = f"ai:chart-query:v3:{sport}:{season}:{season_type}:{team_code or 'all'}:{chart_id}:{_stable_json_hash(summary)}:{_stable_hash(question.lower())}"
     cached = _cache_get(cache_key)
     if cached:
         try:
-            return json.loads(cached)
+            payload = json.loads(cached)
+            payload["meta"] = {**payload.get("meta", {}), "cache_status": "hit"}
+            return payload
         except Exception:
             pass
 
@@ -326,7 +347,7 @@ def answer_chart_query(
         },
     )
 
-    answer = rewrite_grounded_pulse_answer(
+    rewritten, rewrite_meta = rewrite_grounded_pulse_answer_with_meta(
         question=question,
         sport=sport,
         season=season,
@@ -337,12 +358,19 @@ def answer_chart_query(
         extra_context=extra_context,
     )
 
-    result = {
+    result = _attach_meta({
         "assistant_name": "Pulse",
-        "answer": answer,
+        "answer": rewritten,
         "supporting_items": [],
         "route": route,
-    }
+    }, _meta_payload(
+        cache_status="miss",
+        provider=rewrite_meta.get("provider", "none"),
+        fallback_used=bool(rewrite_meta.get("fallback_used")),
+        rewrite_applied=bool(rewrite_meta.get("rewrite_applied")),
+        source=rewrite_meta.get("source", "deterministic"),
+        note=rewrite_meta.get("note"),
+    ))
     _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
     return result
 
@@ -365,13 +393,13 @@ def answer_query(
     question = (question or "").strip()
 
     if not question:
-        return {
+        return _attach_meta({
             "assistant_name": "Pulse",
             "answer": "Ask a question about recent trends, team comparisons, rankings, or why a team is rising and falling.",
             "supporting_items": [],
             "storylines": [],
             "route": None,
-        }
+        }, _meta_payload(cache_status="skip", source="deterministic", note="empty-question"))
 
     pre_route = route_query(
         question=question,
@@ -385,11 +413,13 @@ def answer_query(
 
     question_key = _stable_hash(question.lower())
     context_key = _stable_json_hash(_merge_context_payload(page_context=page_context, chart_context=chart_context))
-    cache_key = f"ai:query:v5:{sport}:{resolved_season}:{resolved_season_type}:{team_code or 'all'}:{context_key}:{question_key}"
+    cache_key = f"ai:query:v6:{sport}:{resolved_season}:{resolved_season_type}:{team_code or 'all'}:{context_key}:{question_key}"
     cached = _cache_get(cache_key)
     if cached:
         try:
-            return json.loads(cached)
+            payload = json.loads(cached)
+            payload["meta"] = {**payload.get("meta", {}), "cache_status": "hit"}
+            return payload
         except Exception:
             pass
 
@@ -401,7 +431,7 @@ def answer_query(
         team_code=team_code,
     )
     if not summaries:
-        return {
+        return _attach_meta({
             "assistant_name": "Pulse",
             "answer": "Not enough data yet.",
             "supporting_items": [],
@@ -412,7 +442,7 @@ def answer_query(
                 "resolved_season_type": resolved_season_type,
                 "team_filter": team_code,
             },
-        }
+        }, _meta_payload(cache_status="miss", source="deterministic", note="no-summaries"))
 
     known_codes = {s["team_code"] for s in summaries}
     route = route_query(
@@ -434,24 +464,24 @@ def answer_query(
     items = context.get("items") or []
 
     if route["query_type"] in {"smalltalk", "unknown"}:
-        result = {
+        result = _attach_meta({
             "assistant_name": "Pulse",
             "answer": generate_smalltalk_response(question),
             "supporting_items": [],
             "storylines": [],
             "route": route,
-        }
+        }, _meta_payload(cache_status="miss", source="deterministic", note="smalltalk"))
         _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
         return result
 
     if route["query_type"] == "clarify_team":
-        result = {
+        result = _attach_meta({
             "assistant_name": "Pulse",
             "answer": route.get("message") or "Which team are you asking about?",
             "supporting_items": [],
             "storylines": [],
             "route": route,
-        }
+        }, _meta_payload(cache_status="miss", source="deterministic", note="clarify-team"))
         _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
         return result
 
@@ -475,27 +505,34 @@ def answer_query(
         team_code=team_code,
         limit=4,
     )
-    answer = answer_for_route(route, context, sport)
-    if not answer:
-        answer = _fallback_answer(context, route)
+    deterministic_answer = answer_for_route(route, context, sport)
+    if not deterministic_answer:
+        deterministic_answer = _fallback_answer(context, route)
 
-    answer = rewrite_grounded_pulse_answer(
+    rewritten, rewrite_meta = rewrite_grounded_pulse_answer_with_meta(
         question=question,
         sport=sport,
         season=resolved_season,
         season_type=resolved_season_type,
         route=route,
         items=items,
-        deterministic_answer=answer,
+        deterministic_answer=deterministic_answer,
         extra_context=_merge_context_payload(page_context=page_context, chart_context=chart_context),
     )
 
-    result = {
+    result = _attach_meta({
         "assistant_name": "Pulse",
-        "answer": answer,
+        "answer": rewritten,
         "supporting_items": items[:5],
         "storylines": storylines,
         "route": route,
-    }
+    }, _meta_payload(
+        cache_status="miss",
+        provider=rewrite_meta.get("provider", "none"),
+        fallback_used=bool(rewrite_meta.get("fallback_used")),
+        rewrite_applied=bool(rewrite_meta.get("rewrite_applied")),
+        source=rewrite_meta.get("source", "deterministic"),
+        note=rewrite_meta.get("note"),
+    ))
     _cache_set(cache_key, json.dumps(result), QUERY_TTL_SECONDS)
     return result
