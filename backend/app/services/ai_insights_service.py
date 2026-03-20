@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -183,28 +183,94 @@ def build_storylines(
     return out
 
 
-def _build_query_context(
-    summaries: List[Dict[str, Any]],
+def _load_summaries_for_seasons(
+    db: Session,
     *,
+    sport: str,
+    seasons: List[int],
+    season_type: str,
+    team_code: Optional[str],
+) -> Dict[int, List[Dict[str, Any]]]:
+    out: Dict[int, List[Dict[str, Any]]] = {}
+    for season in seasons:
+        rows = compute_league_trend_summaries(
+            db,
+            sport=sport,
+            season=int(season),
+            season_type=season_type,
+            team_code=team_code,
+        )
+        tagged: List[Dict[str, Any]] = []
+        for row in rows:
+            tagged.append({**row, "season": int(season), "season_type": season_type})
+        out[int(season)] = tagged
+    return out
+
+
+def _merge_all_summaries(by_season: Dict[int, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = []
+    for season in sorted(by_season.keys(), reverse=True):
+        merged.extend(by_season[season])
+    return merged
+
+
+def _pick_latest_available_rows(by_season: Dict[int, List[Dict[str, Any]]], teams: List[str]) -> List[Dict[str, Any]]:
+    picked: List[Dict[str, Any]] = []
+    for code in teams:
+        for season in sorted(by_season.keys(), reverse=True):
+            row = next((r for r in by_season.get(season, []) if r.get("team_code") == code), None)
+            if row:
+                picked.append(row)
+                break
+    return picked
+
+
+def _build_query_context(
+    all_summaries: List[Dict[str, Any]],
+    *,
+    by_season: Dict[int, List[Dict[str, Any]]],
     route: Dict[str, Any],
 ) -> Dict[str, Any]:
     query_type = route["query_type"]
     teams = route.get("teams") or []
     metric_focus = route.get("metric_focus", "overall")
     direction = route.get("direction", "neutral")
+    requested_seasons = route.get("requested_seasons") or []
+    compare_kind = route.get("compare_kind")
 
     if query_type == "team_compare":
-        selected = [s for s in summaries if s["team_code"] in teams][:2]
+        if compare_kind == "teams":
+            selected = _pick_latest_available_rows(by_season, teams)[:2]
+            return {"mode": "team_compare", "items": selected}
+        if compare_kind == "seasons":
+            team = teams[0] if teams else None
+            season_rows: List[Dict[str, Any]] = []
+            for season in requested_seasons:
+                row = next((r for r in by_season.get(int(season), []) if team is None or r.get("team_code") == team), None)
+                if row:
+                    season_rows.append(row)
+            return {"mode": "season_compare", "items": season_rows}
+        if compare_kind == "teams_and_seasons":
+            season_rows = [
+                r
+                for season in requested_seasons
+                for r in by_season.get(int(season), [])
+                if r.get("team_code") in teams
+            ]
+            return {"mode": "teams_and_seasons", "items": season_rows}
+        selected = _pick_latest_available_rows(by_season, teams)[:2]
         return {"mode": "team_compare", "items": selected}
 
     if query_type in {"team_trend", "stat_explain"}:
-        selected = [s for s in summaries if s["team_code"] in teams] if teams else summaries[:1]
+        selected = [s for s in all_summaries if s["team_code"] in teams] if teams else all_summaries[:1]
+        selected = sorted(selected, key=lambda r: (r.get("season") or 0), reverse=True)
         return {"mode": query_type, "items": selected[:2]}
 
     if query_type in {"smalltalk", "unknown", "clarify_team"}:
         return {"mode": query_type, "items": []}
 
-    sorted_rows = _sort_rows(summaries, metric_focus, direction)
+    base_rows = by_season.get(int(requested_seasons[0]), all_summaries) if requested_seasons else all_summaries
+    sorted_rows = _sort_rows(base_rows, metric_focus, direction)
     return {
         "mode": query_type,
         "metric_focus": metric_focus,
@@ -218,12 +284,22 @@ def _fallback_answer(context: Dict[str, Any], route: Dict[str, Any]) -> str:
     if not items:
         return "Not enough data yet."
 
-    if route["query_type"] == "team_compare" and len(items) >= 2:
-        a, b = items[0], items[1]
-        return (
-            f"{a['label']} vs {b['label']}: recent margin delta is {a.get('margin_delta')} versus {b.get('margin_delta')}, "
-            f"offense delta is {a.get('offense_delta')} versus {b.get('offense_delta')}, and defense delta is {a.get('defense_delta')} versus {b.get('defense_delta')}."
-        )
+    if route["query_type"] == "team_compare":
+        compare_kind = route.get("compare_kind")
+        if compare_kind == "seasons" and len(items) >= 2:
+            first, last = items[0], items[-1]
+            return (
+                f"{first['label']} changed from {first.get('season')} to {last.get('season')}: "
+                f"margin Δ {first.get('margin_delta')} to {last.get('margin_delta')}, "
+                f"offense Δ {first.get('offense_delta')} to {last.get('offense_delta')}, "
+                f"defense Δ {first.get('defense_delta')} to {last.get('defense_delta')}."
+            )
+        if len(items) >= 2:
+            a, b = items[0], items[1]
+            return (
+                f"{a['label']} vs {b['label']}: recent margin delta is {a.get('margin_delta')} versus {b.get('margin_delta')}, "
+                f"offense delta is {a.get('offense_delta')} versus {b.get('offense_delta')}, and defense delta is {a.get('defense_delta')} versus {b.get('defense_delta')}."
+            )
 
     if route["query_type"] == "team_trend":
         row = items[0]
@@ -271,11 +347,13 @@ def answer_query(
         default_season=base_season,
         default_season_type=base_season_type,
     )
+    requested_seasons = [int(s) for s in (pre_route.get("requested_seasons") or [base_season])]
     resolved_season = int(pre_route.get("requested_season") or base_season)
     resolved_season_type = normalize_season_type(pre_route.get("requested_season_type") or base_season_type)
 
     question_key = _stable_hash(question.lower())
-    cache_key = f"ai:query:v4:{sport}:{resolved_season}:{resolved_season_type}:{team_code or 'all'}:{question_key}"
+    season_key = "-".join(str(s) for s in requested_seasons)
+    cache_key = f"ai:query:v6:{sport}:{season_key}:{resolved_season_type}:{team_code or 'all'}:{question_key}"
     cached = _cache_get(cache_key)
     if cached:
         try:
@@ -283,14 +361,15 @@ def answer_query(
         except Exception:
             pass
 
-    summaries = compute_league_trend_summaries(
+    summaries_by_season = _load_summaries_for_seasons(
         db,
         sport=sport,
-        season=resolved_season,
+        seasons=requested_seasons,
         season_type=resolved_season_type,
-        team_code=team_code,
+        team_code=None,
     )
-    if not summaries:
+    all_summaries = _merge_all_summaries(summaries_by_season)
+    if not all_summaries:
         return {
             "assistant_name": "Pulse",
             "answer": "Not enough data yet.",
@@ -300,11 +379,12 @@ def answer_query(
                 **pre_route,
                 "resolved_season": resolved_season,
                 "resolved_season_type": resolved_season_type,
+                "requested_seasons": requested_seasons,
                 "team_filter": team_code,
             },
         }
 
-    known_codes = {s["team_code"] for s in summaries}
+    known_codes = {s["team_code"] for s in all_summaries}
     route = route_query(
         question=question,
         known_codes=known_codes,
@@ -314,9 +394,10 @@ def answer_query(
     )
     route["resolved_season"] = resolved_season
     route["resolved_season_type"] = resolved_season_type
+    route["requested_seasons"] = [int(s) for s in (route.get("requested_seasons") or requested_seasons)]
     route["team_filter"] = team_code
 
-    context = _build_query_context(summaries, route=route)
+    context = _build_query_context(all_summaries, by_season=summaries_by_season, route=route)
     items = context.get("items") or []
 
     if route["query_type"] in {"smalltalk", "unknown"}:
@@ -342,21 +423,24 @@ def answer_query(
         return result
 
     if route["query_type"] in {"team_trend", "stat_explain"} and route.get("teams"):
+        latest_team = route["teams"][0]
         direct = compute_team_trend_summary(
             db,
             sport=sport,
-            season=resolved_season,
+            season=route["requested_seasons"][0],
             season_type=resolved_season_type,
-            team_code=route["teams"][0],
+            team_code=latest_team,
         )
         if direct:
+            direct["season"] = route["requested_seasons"][0]
+            direct["season_type"] = resolved_season_type
             items = [direct]
             context["items"] = items
 
     storylines = build_storylines(
         db,
         sport=sport,
-        season=resolved_season,
+        season=route["requested_seasons"][0],
         season_type=resolved_season_type,
         team_code=team_code,
         limit=4,
@@ -368,7 +452,7 @@ def answer_query(
     answer = rewrite_grounded_pulse_answer(
         question=question,
         sport=sport,
-        season=resolved_season,
+        season=route["requested_seasons"][0],
         season_type=resolved_season_type,
         route=route,
         items=items,
@@ -378,7 +462,7 @@ def answer_query(
     result = {
         "assistant_name": "Pulse",
         "answer": answer,
-        "supporting_items": items[:5],
+        "supporting_items": items[:8],
         "storylines": storylines,
         "route": route,
     }

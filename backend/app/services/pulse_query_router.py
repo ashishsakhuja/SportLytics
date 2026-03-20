@@ -135,8 +135,9 @@ SPORTS_INTENT_TERMS = {
     "losses",
 }
 
-THRESHOLD_PATTERN = re.compile(r"(over|under|more than|less than|at least|at most)\s+(\d+(?:\.\d+)?)")
-YEAR_PATTERN = re.compile(r"(20\d{2})")
+THRESHOLD_PATTERN = re.compile(r"\b(over|under|more than|less than|at least|at most)\s+(\d+(?:\.\d+)?)\b")
+YEAR_PATTERN = re.compile(r"\b(20\d{2})\b")
+LAST_N_SEASONS_PATTERN = re.compile(r"\b(?:last|past|previous)\s+(\d+)\s+(?:seasons|years)\b")
 CURRENT_YEAR = datetime.now().year
 
 
@@ -147,7 +148,9 @@ def extract_team_codes(question: str, known_codes: set[str]) -> List[str]:
     alias_items = sorted(TEAM_ALIASES.items(), key=lambda kv: len(kv[0]), reverse=True)
 
     for alias, code in alias_items:
-        if code not in known_codes or code in found:
+        if known_codes and code not in known_codes:
+            continue
+        if code in found:
             continue
         pattern = rf"(?<![a-z]){re.escape(alias.lower())}(?![a-z])"
         if re.search(pattern, q):
@@ -160,29 +163,43 @@ def extract_team_codes(question: str, known_codes: set[str]) -> List[str]:
         if re.search(pattern, q):
             found.append(code)
 
-    return found[:4]
+    return found[:6]
+
+
+def extract_requested_seasons(question: str, default_season: int | None = None) -> List[int]:
+    text = (question or "").lower().strip()
+    seasons: List[int] = []
+
+    explicit_years = [int(m.group(1)) for m in YEAR_PATTERN.finditer(text)]
+    for year in explicit_years:
+        if year not in seasons:
+            seasons.append(year)
+
+    if seasons:
+        return seasons[:4]
+
+    match = LAST_N_SEASONS_PATTERN.search(text)
+    if match:
+        try:
+            count = max(1, min(4, int(match.group(1))))
+        except Exception:
+            count = 2
+        start = int(default_season or CURRENT_YEAR)
+        return [start - idx for idx in range(count)]
+
+    if any(p in text for p in {"last season", "previous season"}):
+        start = int(default_season or CURRENT_YEAR) - 1
+        return [start]
+
+    if "this season" in text or "current season" in text:
+        return [int(default_season or CURRENT_YEAR)]
+
+    return [int(default_season)] if default_season is not None else []
 
 
 def extract_requested_season(question: str, default_season: int | None = None) -> int | None:
-    text = (question or "").lower().strip()
-    match = YEAR_PATTERN.search(text)
-    if match:
-        try:
-            return int(match.group(1))
-        except Exception:
-            return default_season
-
-    if "last season" in text or "previous season" in text:
-        if default_season is not None:
-            return max(1900, int(default_season) - 1)
-        return CURRENT_YEAR - 1
-
-    if "this season" in text or "current season" in text:
-        if default_season is not None:
-            return int(default_season)
-        return CURRENT_YEAR
-
-    return default_season
+    seasons = extract_requested_seasons(question, default_season)
+    return seasons[0] if seasons else default_season
 
 
 def extract_requested_season_type(question: str, default_season_type: str | None = None) -> str | None:
@@ -249,7 +266,8 @@ def route_query(
         teams = [filter_code]
     has_sports_intent = _has_sports_intent(text, teams)
 
-    requested_season = extract_requested_season(raw_question, default_season)
+    requested_seasons = extract_requested_seasons(raw_question, default_season)
+    requested_season = requested_seasons[0] if requested_seasons else default_season
     requested_season_type = extract_requested_season_type(raw_question, default_season_type)
 
     if (_contains_any(text, GREETING_TERMS) or _contains_any(text, SMALLTALK_TERMS)) and not has_sports_intent:
@@ -258,6 +276,7 @@ def route_query(
             "raw_question": raw_question,
             "requested_season": requested_season,
             "requested_season_type": requested_season_type,
+            "requested_seasons": requested_seasons,
         }
 
     metric_focus = _infer_metric_focus(text)
@@ -268,13 +287,13 @@ def route_query(
     has_trend = _contains_any(text, TREND_TERMS)
     has_explain = _contains_any(text, EXPLAIN_TERMS)
     has_threshold = THRESHOLD_PATTERN.search(text) is not None
+    has_multi_team = len(teams) >= 2
+    has_multi_season = len(requested_seasons) >= 2
 
-    if has_compare or len(teams) >= 2:
+    if has_compare or has_multi_team or has_multi_season:
         query_type = "team_compare"
-
     elif has_explain and teams:
         query_type = "stat_explain"
-
     elif has_explain and not teams and has_sports_intent:
         return {
             "query_type": "clarify_team",
@@ -282,26 +301,20 @@ def route_query(
             "raw_question": raw_question,
             "requested_season": requested_season,
             "requested_season_type": requested_season_type,
+            "requested_seasons": requested_seasons,
         }
-
     elif has_rank and has_trend:
         query_type = "trend_rank"
-
     elif has_rank:
         query_type = "league_rank"
-
     elif teams:
         query_type = "team_trend"
-
     elif has_trend:
         query_type = "trend_rank"
-
     elif has_threshold and metric_focus == "offense":
         query_type = "league_rank"
-
     elif has_sports_intent:
         query_type = "league_rank"
-
     else:
         return {
             "query_type": "unknown",
@@ -309,6 +322,7 @@ def route_query(
             "raw_question": raw_question,
             "requested_season": requested_season,
             "requested_season_type": requested_season_type,
+            "requested_seasons": requested_seasons,
         }
 
     threshold = None
@@ -318,6 +332,17 @@ def route_query(
             threshold = float(threshold_match.group(2))
         except Exception:
             threshold = None
+
+    compare_kind = None
+    if query_type == "team_compare":
+        if has_multi_team and has_multi_season:
+            compare_kind = "teams_and_seasons"
+        elif has_multi_team:
+            compare_kind = "teams"
+        elif has_multi_season:
+            compare_kind = "seasons"
+        else:
+            compare_kind = "teams"
 
     return {
         "query_type": query_type,
@@ -330,4 +355,6 @@ def route_query(
         "raw_question": raw_question,
         "requested_season": requested_season,
         "requested_season_type": requested_season_type,
+        "requested_seasons": requested_seasons,
+        "compare_kind": compare_kind,
     }

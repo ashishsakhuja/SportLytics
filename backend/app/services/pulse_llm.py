@@ -21,7 +21,7 @@ Rules:
 - Do not invent teams, scores, injuries, schedules, rumors, rankings, or statistics.
 - If the context is weak or missing, reply exactly: Not enough data yet.
 - If the question is non-sports, politely say you can only analyze sports information.
-- Respect the requested season and season type shown in the context.
+- Respect the requested season, requested seasons, season type, and team context shown in the route metadata.
 """.strip()
 
 SMALLTALK_SYSTEM_PROMPT = """
@@ -74,11 +74,13 @@ def rewrite_grounded_pulse_answer(
         return "Not enough data yet."
 
     compact_items = []
-    for row in items[:5]:
+    for row in items[:8]:
         compact_items.append(
             {
                 "team_code": row.get("team_code"),
                 "label": row.get("label"),
+                "season": row.get("season"),
+                "season_type": row.get("season_type"),
                 "recent_record": row.get("recent_record"),
                 "season_avg_margin": row.get("season_avg_margin"),
                 "margin_delta": row.get("margin_delta"),
@@ -119,7 +121,8 @@ Requirements:
 - Give a direct answer first.
 - Then add 2 or 3 short bullet-style insights using hyphen bullets when useful.
 - Stay fully grounded in the supplied data.
-- Respect the requested season and team context.
+- Respect the requested season, requested seasons, and team context.
+- If multiple seasons are requested, mention the season years explicitly.
 - Do not add any facts beyond the route metadata, supporting items, and deterministic draft answer.
 """.strip()
 
@@ -129,7 +132,7 @@ Requirements:
             system_prompt=PULSE_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             temperature=0.35,
-            max_tokens=220,
+            max_tokens=260,
         )
         cleaned = (text or "").strip()
         return cleaned or deterministic_answer
