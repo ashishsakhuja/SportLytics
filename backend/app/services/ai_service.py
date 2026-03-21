@@ -1,4 +1,4 @@
-import os
+\import os
 import json
 import hashlib
 from typing import Any, Dict
@@ -6,8 +6,6 @@ from typing import Any, Dict
 from openai import OpenAI
 
 from app.services.redis_cache import get_redis
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 CAPTION_TTL_SECONDS = int(os.getenv("AI_CAPTION_TTL_SECONDS", "3600"))
 CHART_QUERY_TTL_SECONDS = int(os.getenv("AI_CHART_QUERY_TTL_SECONDS", "1800"))
@@ -25,9 +23,33 @@ Rules:
 - Be objective and analytical.
 """
 
+_client: OpenAI | None = None
+
+
+def _get_openai_client() -> OpenAI | None:
+  global _client
+
+  if _client is not None:
+    return _client
+
+  api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+  if not api_key:
+    return None
+
+  try:
+    _client = OpenAI(api_key=api_key)
+  except Exception:
+    return None
+
+  return _client
+
 
 def generate_chart_caption(chart_id: str, summary: dict) -> str:
   if not summary or len(summary) == 0:
+    return "Not enough data yet."
+
+  client = _get_openai_client()
+  if client is None:
     return "Not enough data yet."
 
   user_prompt = f"""
@@ -39,17 +61,19 @@ Data Summary:
 Generate a concise analytical insight.
 """
 
-  resp = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[
-      {"role": "system", "content": SYSTEM_PROMPT},
-      {"role": "user", "content": user_prompt},
-    ],
-    temperature=0.2,
-    max_tokens=120,
-  )
-
-  return (resp.choices[0].message.content or "").strip() or "Not enough data yet."
+  try:
+    resp = client.chat.completions.create(
+      model="gpt-4o-mini",
+      messages=[
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+      ],
+      temperature=0.2,
+      max_tokens=120,
+    )
+    return (resp.choices[0].message.content or "").strip() or "Not enough data yet."
+  except Exception:
+    return "Not enough data yet."
 
 
 def _stable_summary_hash(summary: Dict[str, Any]) -> str:
@@ -79,7 +103,6 @@ def generate_chart_caption_cached(
   team: str,
   summary: Dict[str, Any],
 ) -> str:
-  # Always safe fallback
   if not summary or len(summary) == 0:
     return "Not enough data yet."
 
@@ -95,13 +118,11 @@ def generate_chart_caption_cached(
   r = get_redis()
   if r is not None:
     try:
-      # quick health check to avoid stack traces on every request
       r.ping()
       cached = r.get(key)
       if cached:
         return cached
     except Exception:
-      # Redis down/unreachable -> fail open
       r = None
 
   caption = generate_chart_caption(chart_id=chart_id, summary=summary)
@@ -111,10 +132,10 @@ def generate_chart_caption_cached(
       ttl = CAPTION_TTL_SECONDS if caption != "Not enough data yet." else min(300, CAPTION_TTL_SECONDS)
       r.setex(key, ttl, caption)
     except Exception:
-      # Cache write failed -> ignore, return caption
       pass
 
   return caption
+
 
 def generate_chart_answer(
   *,
@@ -128,6 +149,10 @@ def generate_chart_answer(
   question: str,
 ) -> str:
   if not summary or len(summary) == 0 or not (question or "").strip():
+    return "Not enough data yet."
+
+  client = _get_openai_client()
+  if client is None:
     return "Not enough data yet."
 
   user_prompt = f"""
@@ -147,17 +172,19 @@ Data Summary:
 Answer the question using only this chart summary.
 """
 
-  resp = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[
-      {"role": "system", "content": SYSTEM_PROMPT},
-      {"role": "user", "content": user_prompt},
-    ],
-    temperature=0.2,
-    max_tokens=180,
-  )
-
-  return (resp.choices[0].message.content or "").strip() or "Not enough data yet."
+  try:
+    resp = client.chat.completions.create(
+      model="gpt-4o-mini",
+      messages=[
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+      ],
+      temperature=0.2,
+      max_tokens=180,
+    )
+    return (resp.choices[0].message.content or "").strip() or "Not enough data yet."
+  except Exception:
+    return "Not enough data yet."
 
 
 def generate_chart_answer_cached(
