@@ -2,17 +2,20 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+type SummaryValue = string | number | boolean | null | SummaryObject | SummaryValue[];
+type SummaryObject = { [key: string]: SummaryValue };
+
 type Props = {
   chartId: string;
   sport: string;
   season: number;
   seasonType: string;
   team: string;
-  summary: any;
+  summary: SummaryObject | null;
   tip?: string | null;
 };
 
-function stableStringify(obj: any) {
+function stableStringify(obj: SummaryObject | null) {
   try {
     return JSON.stringify(obj ?? {});
   } catch {
@@ -20,76 +23,70 @@ function stableStringify(obj: any) {
   }
 }
 
-function autoTip(chartId: string, summary: any): string {
-  if (!summary || (typeof summary === "object" && Object.keys(summary).length === 0)) {
-    return "Not enough data yet — add more games to sharpen the read.";
-  }
+function isEmptySummary(summary: SummaryObject | null): boolean {
+  return !summary || Object.keys(summary).length === 0;
+}
 
+function autoTip(chartId: string): string {
   switch (chartId) {
     case "offense_defense":
       return "Bottom-right is ideal: higher points scored, lower points allowed.";
     case "rolling_averages":
-      return "Focus on the roll-5 direction (up/down), not one-game spikes.";
+      return "Focus on the roll-5 direction instead of one-game spikes.";
     case "standings":
-      return "Check your team’s win% vs point differential — it flags ‘lucky’ records.";
+      return "Compare win percentage to point differential to spot records that may be inflated.";
     case "scoring_timeseries":
-      return "Big jumps usually mean pace/efficiency changes — compare to schedule strength.";
+      return "Big jumps often reflect pace or efficiency changes, so compare them to schedule difficulty.";
     case "recent_form":
-      return "Compare last 5 vs previous 5 for momentum shifts.";
+      return "Last 5 versus previous 5 is the cleanest momentum check on this page.";
     case "home_away_splits":
-      return "The biggest home-away margin gap is often matchup-sensitive — watch it in playoffs.";
+      return "The largest home-away gap is often matchup-sensitive, especially in playoff-style settings.";
     case "margin_histogram":
-      return "Wider spread = volatility; tight near 0 = lots of coin-flip games.";
+      return "A wider spread means more volatility, while a tight cluster near zero suggests coin-flip games.";
     case "close_games":
-      return "If most wins are close, results can swing quickly week-to-week.";
+      return "If most wins are close, short-term results can swing quickly.";
     case "sos":
-      return "Use SOS to contextualize streaks — tough runs can hide strong play.";
+      return "Use strength of schedule to add context before judging streaks too harshly.";
     case "score_distribution":
-      return "Skewed right means frequent high totals (pace/offense); left means defensive grind.";
-
+      return "Right-skewed scoring usually signals offense and pace; left-skewed scoring hints at defensive grind.";
     case "nfl_passing":
-      return "Pass rate spikes often reflect game script — check if you were trailing.";
+      return "Pass rate spikes often reflect game script, especially when a team is trailing.";
     case "nfl_qb_efficiency":
-      return "If YPA is up while sack rate is down, that’s usually sustainable.";
+      return "If yards per attempt rise while sack rate falls, the trend is usually more sustainable.";
     case "nfl_pressure_mistakes":
-      return "Sacks + turnovers are drive-killers — watch their roll-5 first.";
+      return "Sacks and turnovers are drive-killers, so watch their roll-5 trend first.";
     case "nfl_conversions":
-      return "3rd down and red zone are high leverage — small shifts flip outcomes fast.";
+      return "Third-down and red-zone efficiency are high-leverage areas where small changes flip outcomes fast.";
     case "nfl_relationships":
-      return "High yards + low points usually means red zone stalls or turnovers.";
-
+      return "High yards with low points usually hints at red-zone stalls or giveaways.";
     case "nba_shooting":
-      return "3P% is volatile; eFG% and TS% are better ‘true’ efficiency reads.";
+      return "Three-point percentage is volatile, so use eFG% and TS% for a steadier read.";
     case "nba_efficiency":
-      return "If eFG% and TS% rise together, it’s usually sustainable offense.";
+      return "When eFG% and TS% rise together, the scoring jump is usually more believable.";
     case "nba_ball_movement":
-      return "AST/TOV is a clean proxy for decision quality and shot creation.";
+      return "Assist-to-turnover ratio is a clean signal for decision quality and shot creation.";
     case "nba_pace_offense":
-      return "Separate pace from efficiency to explain scoring swings.";
-
+      return "Separate pace from efficiency before explaining large scoring swings.";
     case "nhl_shot_volume":
-      return "If shots are steady but goals dip, finishing variance may be the story.";
+      return "If shots stay steady but goals dip, finishing variance may be the story.";
     case "nhl_special_teams":
-      return "Power-play swings matter fast — compare PP% and penalty minutes together.";
+      return "Power-play swings matter fast, so compare power-play rate to penalty volume together.";
     case "nhl_puck_battle":
-      return "Faceoffs, hits, and blocks often show whether the team is dictating the game.";
+      return "Faceoffs, hits, and blocks often show whether a team is dictating the game.";
     case "nhl_possession_discipline":
       return "Giveaways plus penalties can erase strong even-strength play quickly.";
     case "nhl_overview":
-      return "Use shots, FO%, PP%, and shooting% together — one stat alone can mislead.";
-
+      return "Use shots, faceoff percentage, power play, and shooting percentage together instead of one stat alone.";
     case "mlb_offense":
-      return "Runs can lag hits in the short term, so compare both before judging the lineup.";
+      return "Runs can lag hits over small samples, so compare both before judging the lineup.";
     case "mlb_slash":
-      return "OPS and ISO help separate raw contact from real power production.";
+      return "OPS and ISO help separate contact quality from real power output.";
     case "mlb_discipline":
       return "If walks are flat and strikeouts rise, the offense usually becomes more volatile.";
     case "mlb_running":
-      return "Stolen bases and LOB together can reveal whether aggression is actually producing runs.";
-
-
+      return "Stolen bases and runners left on base together show whether aggression is actually creating runs.";
     default:
-      return "Use the rolling lines to judge direction, not noise.";
+      return "Use rolling trends to judge direction, not noise.";
   }
 }
 
@@ -106,14 +103,14 @@ export default function AIInsightsBox({
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
 
   const summaryKey = useMemo(() => stableStringify(summary), [summary]);
-  const resolvedTip = (tip ?? "").trim() || autoTip(chartId, summary);
+  const resolvedTip = (tip ?? "").trim() || autoTip(chartId);
 
   useEffect(() => {
     let cancelled = false;
 
     async function run() {
       try {
-        if (!summary || (typeof summary === "object" && Object.keys(summary).length === 0)) {
+        if (isEmptySummary(summary)) {
           setCaption("Not enough data yet.");
           setStatus("ready");
           return;
@@ -138,11 +135,11 @@ export default function AIInsightsBox({
           }),
         });
 
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.detail ?? "AI caption request failed");
+        const data = (await res.json().catch(() => ({}))) as { caption?: string; detail?: string };
+        if (!res.ok) throw new Error(data.detail ?? "AI caption request failed");
 
         if (cancelled) return;
-        setCaption(data?.caption ?? "Not enough data yet.");
+        setCaption(data.caption ?? "Not enough data yet.");
         setStatus("ready");
       } catch {
         if (cancelled) return;
@@ -151,11 +148,11 @@ export default function AIInsightsBox({
       }
     }
 
-    run();
+    void run();
     return () => {
       cancelled = true;
     };
-  }, [chartId, sport, season, seasonType, team, summaryKey]);
+  }, [chartId, sport, season, seasonType, team, summary, summaryKey]);
 
   return (
     <div className="mt-5 sl-plasma-card">

@@ -2,14 +2,21 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+type SummaryValue = string | number | boolean | null | SummaryObject | SummaryValue[];
+type SummaryObject = { [key: string]: SummaryValue };
+
 type Props = {
   chartId: string;
   sport: string;
   season: number;
   seasonType: string;
   team: string;
-  summary: any;
+  summary: SummaryObject | null;
 };
+
+function isEmptySummary(summary: SummaryObject | null): boolean {
+  return !summary || Object.keys(summary).length === 0;
+}
 
 export default function ChartCaption({
   chartId,
@@ -22,7 +29,6 @@ export default function ChartCaption({
   const [caption, setCaption] = useState("Generating insight...");
   const [loading, setLoading] = useState(true);
 
-  // Make dependency stable even if callers pass a freshly-created object
   const summaryKey = useMemo(() => {
     try {
       return JSON.stringify(summary ?? {});
@@ -35,10 +41,14 @@ export default function ChartCaption({
     let cancelled = false;
 
     async function fetchCaption() {
-      if (
-        !summary ||
-        (typeof summary === "object" && Object.keys(summary).length === 0)
-      ) {
+      if (isEmptySummary(summary)) {
+        setCaption("Not enough data yet.");
+        setLoading(false);
+        return;
+      }
+
+      const base = process.env.NEXT_PUBLIC_API_BASE;
+      if (!base) {
         setCaption("Not enough data yet.");
         setLoading(false);
         return;
@@ -46,25 +56,22 @@ export default function ChartCaption({
 
       setLoading(true);
       try {
-        const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_BASE}/ai/chart-caption`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chart_id: chartId,
-              sport,
-              season,
-              season_type: seasonType,
-              team,
-              summary,
-            }),
-          }
-        );
+        const res = await fetch(`${base}/ai/chart-caption`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chart_id: chartId,
+            sport,
+            season,
+            season_type: seasonType,
+            team,
+            summary,
+          }),
+        });
 
-        const data = await res.json();
+        const data = (await res.json().catch(() => ({}))) as { caption?: string };
         const nextCaption =
-          typeof data?.caption === "string" && data.caption.trim().length > 0
+          typeof data.caption === "string" && data.caption.trim().length > 0
             ? data.caption
             : "Not enough data yet.";
 
@@ -76,14 +83,14 @@ export default function ChartCaption({
       }
     }
 
-    fetchCaption();
+    void fetchCaption();
     return () => {
       cancelled = true;
     };
-  }, [chartId, sport, season, seasonType, team, summaryKey]);
+  }, [chartId, sport, season, seasonType, team, summary, summaryKey]);
 
   return (
-    <div className="mt-2 text-xs text-white/60 italic">
+    <div className="mt-2 text-xs italic text-white/60">
       {loading ? "Generating insight..." : caption}
     </div>
   );

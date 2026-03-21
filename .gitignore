@@ -1,14 +1,41 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.env
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
 .venv/
 venv/
+env/
+backend/.venv/
+frontend/.venv/
 
-# Node / frontend (if any)
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Node / frontend
 node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/*.tsbuildinfo
+
+# Build / coverage
+build/
+dist/
+coverage/
+htmlcov/
+
+# Alembic / DB artifacts
+*.db
+*.sqlite
+*.sqlite3
 
 # OS
 .DS_Store
@@ -16,7 +43,11 @@ Thumbs.db
 
 # Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
 
-# IDE
+# IDE / editors
 .vscode/
 .idea/

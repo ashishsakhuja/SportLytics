@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-from typing import List
-
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file='.env', extra='ignore')
+    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
     APP_NAME: str = 'SportLytics API'
     ENV: str = 'local'
-    DATABASE_URL: str = 'postgresql+psycopg2://sportshub:sportshub@localhost:5432/sportshub'
+    DATABASE_URL: str = 'postgresql+psycopg2://sportlytics:sportlytics@127.0.0.1:5432/sportlytics'
 
-    FRONTEND_ORIGINS: str | list[str] = Field(default='http://localhost:3000,http://127.0.0.1:3000')
+    FRONTEND_ORIGINS: str | list[str] = Field(
+        default='http://localhost:3000,http://127.0.0.1:3000'
+    )
     SESSION_COOKIE_NAME: str = 'sportlytics_session'
     SESSION_COOKIE_SECURE: bool = False
     SESSION_COOKIE_SAMESITE: str = 'lax'
