@@ -44,6 +44,25 @@ _ALLOWED_TEAM_CODES = {
 def _allowed_team_codes_for_sport(sport: str) -> set[str]:
     return set(_ALLOWED_TEAM_CODES.get((sport or "").lower().strip(), set()))
 
+
+def _available_seasons(db: Session, sport: str, season_type: str) -> List[int]:
+    rows = (
+        db.query(Game.season)
+        .filter(
+            Game.sport == sport,
+            Game.season.isnot(None),
+            Game.season_type == season_type,
+        )
+        .distinct()
+        .order_by(Game.season.desc())
+        .all()
+    )
+    seasons = [int(season) for (season,) in rows if season is not None]
+    if seasons:
+        return seasons
+    current_year = date.today().year
+    return list(range(current_year, max(current_year - 10, 1999), -1))
+
 BUILT_IN_METRICS = [
     {"key": "score_for", "label": "Score For", "source": "built_in", "group": "Core"},
     {"key": "score_against", "label": "Score Against", "source": "built_in", "group": "Core"},
@@ -561,12 +580,16 @@ def custom_builder_options(
     allowed = _allowed_team_codes_for_sport(sport)
     if allowed:
         teams = [t for t in teams if (t.team_code or "").upper().strip() in allowed] or teams
-    metrics = _discover_metric_keys(db, sport, season, season_type)
+    seasons = _available_seasons(db, sport, season_type)
+    requested_season = season if season in seasons else (seasons[0] if seasons else season)
+    metrics = _discover_metric_keys(db, sport, requested_season, season_type)
 
     return {
         "sport": sport,
-        "season": season,
+        "season": requested_season,
         "season_type": season_type,
+        "seasons": seasons,
+        "latest_season": seasons[0] if seasons else requested_season,
         "max_overlay_teams": MAX_OVERLAY_TEAMS,
         "teams": [
             {

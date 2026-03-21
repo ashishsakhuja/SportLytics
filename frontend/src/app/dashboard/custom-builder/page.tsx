@@ -43,6 +43,8 @@ type BuilderOptionsResp = {
   sport: string;
   season: number;
   season_type: string;
+  seasons: number[];
+  latest_season: number;
   max_overlay_teams: number;
   teams: TeamOption[];
   metrics: MetricOption[];
@@ -118,7 +120,7 @@ const SPORTS: Array<{ key: SportKey; label: string }> = [
   { key: "nhl", label: "NHL" },
 ];
 
-const DEFAULT_SEASON = 2025;
+const DEFAULT_SEASON = new Date().getFullYear();
 const DEFAULT_SEASON_TYPE = "REG";
 const DEFAULT_PRIMARY_METRIC = "score_for";
 const DEFAULT_SECONDARY_METRIC = "score_against";
@@ -264,6 +266,28 @@ export default function CustomBuilderPage() {
   }, [sport, seasonType, seasonTo, team, metric, secondaryMetric]);
 
   useEffect(() => {
+    if (!options) return;
+
+    const available = (options.seasons ?? []).map(String);
+    if (!available.length) return;
+
+    const latest = String(options.latest_season ?? options.season ?? available[0]);
+
+    setSeasonTo((prev) => (available.includes(prev) ? prev : latest));
+    setSeasonFrom((prev) => {
+      const normalized = available.includes(prev) ? prev : latest;
+      const maxTo = available.includes(seasonTo) ? seasonTo : latest;
+      return Number(normalized) > Number(maxTo) ? maxTo : normalized;
+    });
+  }, [options, seasonTo]);
+
+  useEffect(() => {
+    if (Number(seasonFrom) > Number(seasonTo)) {
+      setSeasonFrom(seasonTo);
+    }
+  }, [seasonFrom, seasonTo]);
+
+  useEffect(() => {
     if (!team || !metric) return;
     async function loadPlot() {
       setLoadingPlot(true);
@@ -350,10 +374,13 @@ export default function CustomBuilderPage() {
   );
 
   const seasonOptions = useMemo(() => {
+    const seasons = options?.seasons ?? [];
+    if (seasons.length) return seasons.map(String);
+    const currentYear = new Date().getFullYear();
     const years: string[] = [];
-    for (let y = 2025; y >= 2015; y--) years.push(String(y));
+    for (let y = currentYear; y >= currentYear - 10; y--) years.push(String(y));
     return years;
-  }, []);
+  }, [options]);
 
   const compareModeOptions = useMemo(() => {
     return (options?.compare_modes ?? []).filter(
