@@ -86,7 +86,8 @@ function legendFormatter(value: string) {
 function renderRoundedBar(props: any) {
   const { fill, x, y, width, height, value } = props;
   if (width == null || height == null || x == null || y == null) return null;
-  const radius = typeof value === "number" && value < 0 ? [0, 0, 10, 10] : [10, 10, 0, 0];
+  const radius: [number, number, number, number] =
+    typeof value === "number" && value < 0 ? [0, 0, 10, 10] : [10, 10, 0, 0];
   return <Rectangle x={x} y={y} width={width} height={height} fill={fill} radius={radius} />;
 }
 

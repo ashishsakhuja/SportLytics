@@ -723,7 +723,7 @@ export default function CustomBuilderPage() {
 
     if (
       plot.compare_mode !== "none" &&
-      plot.compare_avg != null &&
+      plot.summary.compare_avg != null &&
       (plot.secondary_metric_label || plot.compare_label)
     ) {
       const compareName = plot.secondary_metric_label ?? plot.compare_label ?? "comparison";
@@ -1216,20 +1216,28 @@ export default function CustomBuilderPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/10 bg-black/20">
-                  {previewRows.slice(0, 12).map((row, idx) => (
-                    <tr
-                      key={`${row.tooltipLabel ?? row.label ?? idx}-${idx}`}
-                      className="text-white/80"
-                    >
-                      {previewColumns.map((col) => (
-                        <td key={`${idx}-${col}`} className="px-4 py-3">
-                          {typeof row[col] === "number"
-                            ? formatNum(row[col] as number)
-                            : String(row[col] ?? "—")}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
+                  {previewRows.slice(0, 12).map((row, idx) => {
+                    const rowRecord = row as Record<string, string | number | null | undefined>;
+                    const rowKey =
+                      rowRecord.tooltipLabel ??
+                      rowRecord.label ??
+                      rowRecord.date ??
+                      rowRecord.idx ??
+                      idx;
+
+                    return (
+                      <tr key={`${String(rowKey)}-${idx}`} className="text-white/80">
+                        {previewColumns.map((col) => {
+                          const cell = rowRecord[col];
+                          return (
+                            <td key={`${idx}-${col}`} className="px-4 py-3">
+                              {typeof cell === "number" ? formatNum(cell) : String(cell ?? "—")}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
                   {!plot || !previewRows.length ? (
                     <tr>
                       <td

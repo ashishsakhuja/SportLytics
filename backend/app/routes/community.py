@@ -400,12 +400,17 @@ def create_group(payload: GroupCreate, db: Session = Depends(get_db), user: User
 
 
 @router.post('/groups/{group_id}/join')
-def join_group(group_id: int, payload: JoinGroupRequest, db: Session = Depends(get_db)):
-    viewer = _actor_name(user, _clean_name(viewer, ""))
+def join_group(
+    group_id: int,
+    payload: JoinGroupRequest,
+    db: Session = Depends(get_db),
+    user: UserAccount | None = Depends(get_current_user_optional),
+):
     group = db.get(CommunityGroup, group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-    viewer = _clean_name(payload.viewer)
+
+    viewer = _actor_name(user, _clean_name(payload.viewer))
     exists = db.query(CommunityGroupMember.id).filter(
         CommunityGroupMember.group_id == group_id,
         CommunityGroupMember.member_name == viewer,
@@ -413,6 +418,8 @@ def join_group(group_id: int, payload: JoinGroupRequest, db: Session = Depends(g
     if not exists:
         db.add(CommunityGroupMember(group_id=group_id, member_name=viewer))
         db.commit()
+        db.refresh(group)
+
     return {"ok": True, "group": _group_payload(db, group, viewer)}
 
 
