@@ -31,13 +31,18 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.FRONTEND_ORIGINS,
     allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True}
+    return {
+        "ok": True,
+        "frontend_origins": settings.FRONTEND_ORIGINS,
+    }
+
 
 app.include_router(news_router)
 app.include_router(meta_router)
