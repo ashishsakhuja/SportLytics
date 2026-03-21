@@ -15,12 +15,7 @@ class Settings(BaseSettings):
     ENV: str = "local"
     DATABASE_URL: str = "postgresql+psycopg2://sportlytics:sportlytics@127.0.0.1:5432/sportlytics"
 
-    FRONTEND_ORIGINS: list[str] = Field(
-        default_factory=lambda: [
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ]
-    )
+    FRONTEND_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     SESSION_COOKIE_NAME: str = "sportlytics_session"
     SESSION_COOKIE_SECURE: bool = False
@@ -50,18 +45,12 @@ class Settings(BaseSettings):
 
     @field_validator("FRONTEND_ORIGINS", mode="before")
     @classmethod
-    def _split_frontend_origins(cls, value: str | list[str] | None) -> list[str]:
+    def _normalize_frontend_origins(cls, value: str | list[str] | None) -> str:
         if value is None:
-            return []
-
+            return ""
         if isinstance(value, list):
-            return [str(item).strip() for item in value if str(item).strip()]
-
-        raw = str(value).strip()
-        if not raw:
-            return []
-
-        return [item.strip() for item in raw.split(",") if item.strip()]
+            return ",".join(str(item).strip() for item in value if str(item).strip())
+        return str(value).strip()
 
     @field_validator("SESSION_COOKIE_SAMESITE")
     @classmethod
@@ -70,6 +59,13 @@ class Settings(BaseSettings):
         if normalized not in {"lax", "strict", "none"}:
             raise ValueError("SESSION_COOKIE_SAMESITE must be one of: lax, strict, none")
         return normalized
+
+    @property
+    def frontend_origins_list(self) -> list[str]:
+        raw = (self.FRONTEND_ORIGINS or "").strip()
+        if not raw:
+            return []
+        return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 settings = Settings()

@@ -29,7 +29,7 @@ app = FastAPI(title=settings.APP_NAME)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.FRONTEND_ORIGINS,
+    allow_origins=settings.frontend_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -40,7 +40,7 @@ app.add_middleware(
 def healthz():
     return {
         "ok": True,
-        "frontend_origins": settings.FRONTEND_ORIGINS,
+        "frontend_origins": settings.frontend_origins_list,
     }
 
 
