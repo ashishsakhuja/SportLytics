@@ -35,6 +35,10 @@ app.add_middleware(
     allow_headers=['*'],
 )
 
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
 app.include_router(news_router)
 app.include_router(meta_router)
 app.include_router(feed_router)
