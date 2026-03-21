@@ -130,7 +130,7 @@ export default function PremiumPage() {
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.22em] text-fuchsia-200/70">Pulse Premium</div>
                 <h1 className="mt-3 text-3xl font-semibold tracking-tight">Sharper signals, cleaner workflows.</h1>
-                <p className="mt-3 max-w-2xl text-sm text-white/70">Unlock Premium for <span className="font-semibold text-white">{priceLabel(subscription?.price_cents ?? 499, subscription?.currency ?? "usd")}/month</span>. Billing is handled with Stripe Checkout so payment details are collected on Stripe-hosted pages instead of inside SportLytics.</p>
+                <p className="mt-3 max-w-2xl text-sm text-white/70">Unlock Premium for <span className="font-semibold text-white">{priceLabel(subscription?.price_cents ?? 699, subscription?.currency ?? "usd")}/month</span>. Billing is handled with Stripe Checkout so payment details are collected on Stripe-hosted pages instead of inside SportLytics.</p>
               </div>
               <div className={`rounded-2xl border px-4 py-3 text-sm ${subscription?.is_premium ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100" : "border-white/10 bg-white/5 text-white/70"}`}>
                 {subscription?.is_premium ? "Premium active" : "Free account"}
@@ -138,7 +138,7 @@ export default function PremiumPage() {
             </div>
 
             {checkoutState === "success" ? (
-              <div className="mt-5 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">Checkout completed. If the badge below has not updated yet, refresh after your Stripe webhook lands.</div>
+              <div className="mt-5 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">Checkout completed successfully! Welcome to Sportlytics Premium.</div>
             ) : null}
             {checkoutState === "cancelled" ? (
               <div className="mt-5 rounded-2xl border border-yellow-400/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-100">Checkout was cancelled. Your account is still on the free plan.</div>
@@ -164,7 +164,7 @@ export default function PremiumPage() {
                 disabled={busy !== null || subscription?.access_source === "admin"}
                 className="rounded-2xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-5 py-3 font-medium text-fuchsia-100 hover:bg-fuchsia-500/15 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {busy === "checkout" ? "Redirecting..." : subscription?.is_premium ? "Start new Stripe checkout" : `Upgrade for ${priceLabel(subscription?.price_cents ?? 499, subscription?.currency ?? "usd")}/mo`}
+                {busy === "checkout" ? "Redirecting..." : subscription?.is_premium ? "Start new Stripe checkout" : `Upgrade for ${priceLabel(subscription?.price_cents ?? 699, subscription?.currency ?? "usd")}/mo`}
               </button>
 
               <button

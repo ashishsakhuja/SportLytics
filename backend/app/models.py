@@ -302,7 +302,7 @@ class PremiumSubscription(Base):
     status: Mapped[str] = mapped_column(String(30), default="inactive", index=True)
     access_source: Mapped[str] = mapped_column(String(20), default="stripe", index=True)  # stripe/admin
 
-    price_cents: Mapped[int] = mapped_column(Integer, default=499)
+    price_cents: Mapped[int] = mapped_column(Integer, default=699)
     currency: Mapped[str] = mapped_column(String(8), default="usd")
 
     stripe_customer_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)

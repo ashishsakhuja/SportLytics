@@ -3,3 +3,5 @@
 
 python -m app.scripts.ingest_now
 uvicorn app.main:app --reload
+
+docker exec -it infra-db-1 psql -U sportshub -d sportshub
