@@ -1,13 +1,12 @@
-from sqlalchemy import String, DateTime, Text, Index
-from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
-from .db import Base
-from sqlalchemy import String, DateTime, Integer
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+
 import sqlalchemy as sa
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects import postgresql
-from sqlalchemy import Boolean, Float
-from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from .db import Base
 
 
 class ContentItem(Base):
@@ -91,9 +90,6 @@ Index("ix_social_platform_created_at", SocialPost.platform, SocialPost.created_a
 # -----------------------------
 # Sports Data Models (Dashboards)
 # -----------------------------
-
-from sqlalchemy import UniqueConstraint
-
 
 class Team(Base):
     __tablename__ = "teams"
@@ -190,7 +186,7 @@ class TeamGameStats(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
 
     sport: Mapped[str] = mapped_column(String(30), index=True)
-    game_id: Mapped[int] = mapped_column(Integer, index=True)
+    game_id: Mapped[int] = mapped_column(ForeignKey("games.id", ondelete="CASCADE"), index=True)
 
     team_code: Mapped[str] = mapped_column(String(10), index=True)
     season: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
@@ -221,6 +217,7 @@ class CommunityGroup(Base):
     sport: Mapped[str | None] = mapped_column(String(30), index=True, nullable=True)
     is_private: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_by: Mapped[str] = mapped_column(String(80), index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user_accounts.id", ondelete="SET NULL"), index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
@@ -228,8 +225,9 @@ class CommunityGroupMember(Base):
     __tablename__ = "community_group_members"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    group_id: Mapped[int] = mapped_column(Integer, index=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("community_groups.id", ondelete="CASCADE"), index=True)
     member_name: Mapped[str] = mapped_column(String(80), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("user_accounts.id", ondelete="CASCADE"), index=True, nullable=True)
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
     __table_args__ = (
@@ -241,9 +239,10 @@ class CommunityThread(Base):
     __tablename__ = "community_threads"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    group_id: Mapped[int] = mapped_column(Integer, index=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("community_groups.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(220), index=True)
     created_by: Mapped[str] = mapped_column(String(80), index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user_accounts.id", ondelete="SET NULL"), index=True, nullable=True)
     is_private: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     auto_source_kind: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
     auto_source_key: Mapped[str | None] = mapped_column(String(160), nullable=True, unique=True, index=True)
@@ -255,8 +254,9 @@ class CommunityMessage(Base):
     __tablename__ = "community_messages"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    thread_id: Mapped[int] = mapped_column(Integer, index=True)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("community_threads.id", ondelete="CASCADE"), index=True)
     author: Mapped[str] = mapped_column(String(80), index=True)
+    author_user_id: Mapped[int | None] = mapped_column(ForeignKey("user_accounts.id", ondelete="SET NULL"), index=True, nullable=True)
     body: Mapped[str] = mapped_column(Text)
     shared_plot_title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     shared_plot_url: Mapped[str | None] = mapped_column(String(600), nullable=True)
@@ -284,7 +284,7 @@ class AuthSession(Base):
     __tablename__ = "auth_sessions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_accounts.id", ondelete="CASCADE"), index=True)
     token: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
@@ -296,7 +296,7 @@ class PremiumSubscription(Base):
     __tablename__ = "premium_subscriptions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_accounts.id", ondelete="CASCADE"), unique=True, index=True)
 
     plan_code: Mapped[str] = mapped_column(String(40), default="pulse_premium_monthly")
     status: Mapped[str] = mapped_column(String(30), default="inactive", index=True)

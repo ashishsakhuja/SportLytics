@@ -193,6 +193,17 @@ export default function CommunityPage() {
     router.push(`/auth/sign-in?returnTo=${encodeURIComponent("/dashboard/community")}`);
   }
 
+  async function handleSignOut() {
+    try {
+      await apiPost('/auth/logout', {});
+    } catch {
+      // keep local sign-out responsive even if the backend request fails
+    } finally {
+      clearAuthSession();
+      setAuthUser(null);
+    }
+  }
+
   useEffect(() => {
     const stored = window.localStorage.getItem("sportlytics.community.viewer");
     if (stored && stored.trim()) {
@@ -513,7 +524,7 @@ export default function CommunityPage() {
             </div>
             {authUser ? (
               <button
-                onClick={() => { clearAuthSession(); setAuthUser(null); }}
+                onClick={handleSignOut}
                 className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-medium transition hover:bg-white/15"
               >
                 Sign out

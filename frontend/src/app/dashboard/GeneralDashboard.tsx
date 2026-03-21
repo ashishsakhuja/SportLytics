@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { apiGet, apiPost } from "@/lib/api";
 import Sparkline from "@/components/Sparkline";
-import { clearAuthSession, getAuthToken, getStoredUser, setStoredUser, type AuthUser } from "@/lib/auth";
+import { clearAuthSession, getStoredUser, setStoredUser, type AuthUser } from "@/lib/auth";
 
 type NewsItem = {
   id: number;
@@ -409,7 +409,7 @@ export default function GeneralDashboard() {
   async function handleSignOut() {
     setAuthBusy(true);
     try {
-      await apiPost("/auth/logout", { token: getAuthToken() ?? "" });
+      await apiPost("/auth/logout", {});
     } catch {
       // clear local session even if backend logout fails
     } finally {

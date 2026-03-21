@@ -10,16 +10,14 @@ export type AuthUser = {
   cancel_at_period_end?: boolean;
 };
 
-const TOKEN_KEY = "sportlytics.auth.token";
-const USER_KEY = "sportlytics.auth.user";
+const USER_KEY = 'sportlytics.auth.user';
 
 export function getAuthToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(TOKEN_KEY);
+  return null;
 }
 
 export function getStoredUser(): AuthUser | null {
-  if (typeof window === "undefined") return null;
+  if (typeof window === 'undefined') return null;
   const raw = window.localStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
@@ -30,18 +28,15 @@ export function getStoredUser(): AuthUser | null {
 }
 
 export function setStoredUser(user: AuthUser) {
-  if (typeof window === "undefined") return;
+  if (typeof window === 'undefined') return;
   window.localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
-export function setAuthSession(token: string, user: AuthUser) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(TOKEN_KEY, token);
-  window.localStorage.setItem(USER_KEY, JSON.stringify(user));
+export function setAuthSession(_token: string | null, user: AuthUser) {
+  setStoredUser(user);
 }
 
 export function clearAuthSession() {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(TOKEN_KEY);
+  if (typeof window === 'undefined') return;
   window.localStorage.removeItem(USER_KEY);
 }

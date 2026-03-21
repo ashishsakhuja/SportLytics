@@ -1,0 +1,181 @@
+"""harden auth and community integrity
+
+Revision ID: fce4cb71412e
+Revises: c0282526d14f, c61a4f928d10
+Create Date: 2026-03-21 11:45:00.000000
+"""
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+
+revision: str = 'fce4cb71412e'
+down_revision: Union[str, tuple[str, ...], None] = ('c0282526d14f', 'c61a4f928d10')
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    with op.batch_alter_table('community_groups') as batch_op:
+        batch_op.add_column(sa.Column('created_by_user_id', sa.Integer(), nullable=True))
+        batch_op.create_index('ix_community_groups_created_by_user_id', ['created_by_user_id'])
+        batch_op.create_foreign_key(
+            'fk_community_groups_created_by_user_id_user_accounts',
+            'user_accounts',
+            ['created_by_user_id'],
+            ['id'],
+            ondelete='SET NULL',
+        )
+
+    with op.batch_alter_table('community_group_members') as batch_op:
+        batch_op.add_column(sa.Column('user_id', sa.Integer(), nullable=True))
+        batch_op.create_index('ix_community_group_members_user_id', ['user_id'])
+        batch_op.create_foreign_key(
+            'fk_community_group_members_user_id_user_accounts',
+            'user_accounts',
+            ['user_id'],
+            ['id'],
+            ondelete='CASCADE',
+        )
+        batch_op.create_foreign_key(
+            'fk_community_group_members_group_id_community_groups',
+            'community_groups',
+            ['group_id'],
+            ['id'],
+            ondelete='CASCADE',
+        )
+
+    with op.batch_alter_table('community_threads') as batch_op:
+        batch_op.add_column(sa.Column('created_by_user_id', sa.Integer(), nullable=True))
+        batch_op.create_index('ix_community_threads_created_by_user_id', ['created_by_user_id'])
+        batch_op.create_foreign_key(
+            'fk_community_threads_created_by_user_id_user_accounts',
+            'user_accounts',
+            ['created_by_user_id'],
+            ['id'],
+            ondelete='SET NULL',
+        )
+        batch_op.create_foreign_key(
+            'fk_community_threads_group_id_community_groups',
+            'community_groups',
+            ['group_id'],
+            ['id'],
+            ondelete='CASCADE',
+        )
+
+    with op.batch_alter_table('community_messages') as batch_op:
+        batch_op.add_column(sa.Column('author_user_id', sa.Integer(), nullable=True))
+        batch_op.create_index('ix_community_messages_author_user_id', ['author_user_id'])
+        batch_op.create_foreign_key(
+            'fk_community_messages_author_user_id_user_accounts',
+            'user_accounts',
+            ['author_user_id'],
+            ['id'],
+            ondelete='SET NULL',
+        )
+        batch_op.create_foreign_key(
+            'fk_community_messages_thread_id_community_threads',
+            'community_threads',
+            ['thread_id'],
+            ['id'],
+            ondelete='CASCADE',
+        )
+
+    with op.batch_alter_table('auth_sessions') as batch_op:
+        batch_op.create_foreign_key(
+            'fk_auth_sessions_user_id_user_accounts',
+            'user_accounts',
+            ['user_id'],
+            ['id'],
+            ondelete='CASCADE',
+        )
+
+    with op.batch_alter_table('premium_subscriptions') as batch_op:
+        batch_op.create_foreign_key(
+            'fk_premium_subscriptions_user_id_user_accounts',
+            'user_accounts',
+            ['user_id'],
+            ['id'],
+            ondelete='CASCADE',
+        )
+
+    with op.batch_alter_table('team_game_stats') as batch_op:
+        batch_op.create_foreign_key(
+            'fk_team_game_stats_game_id_games',
+            'games',
+            ['game_id'],
+            ['id'],
+            ondelete='CASCADE',
+        )
+
+    op.execute(
+        """
+        UPDATE community_groups AS cg
+        SET created_by_user_id = ua.id
+        FROM user_accounts AS ua
+        WHERE cg.created_by_user_id IS NULL
+          AND lower(cg.created_by) = lower(ua.display_name)
+        """
+    )
+    op.execute(
+        """
+        UPDATE community_group_members AS cgm
+        SET user_id = ua.id
+        FROM user_accounts AS ua
+        WHERE cgm.user_id IS NULL
+          AND lower(cgm.member_name) = lower(ua.display_name)
+        """
+    )
+    op.execute(
+        """
+        UPDATE community_threads AS ct
+        SET created_by_user_id = ua.id
+        FROM user_accounts AS ua
+        WHERE ct.created_by_user_id IS NULL
+          AND lower(ct.created_by) = lower(ua.display_name)
+        """
+    )
+    op.execute(
+        """
+        UPDATE community_messages AS cm
+        SET author_user_id = ua.id
+        FROM user_accounts AS ua
+        WHERE cm.author_user_id IS NULL
+          AND lower(cm.author) = lower(ua.display_name)
+        """
+    )
+
+
+def downgrade() -> None:
+    with op.batch_alter_table('team_game_stats') as batch_op:
+        batch_op.drop_constraint('fk_team_game_stats_game_id_games', type_='foreignkey')
+
+    with op.batch_alter_table('premium_subscriptions') as batch_op:
+        batch_op.drop_constraint('fk_premium_subscriptions_user_id_user_accounts', type_='foreignkey')
+
+    with op.batch_alter_table('auth_sessions') as batch_op:
+        batch_op.drop_constraint('fk_auth_sessions_user_id_user_accounts', type_='foreignkey')
+
+    with op.batch_alter_table('community_messages') as batch_op:
+        batch_op.drop_constraint('fk_community_messages_thread_id_community_threads', type_='foreignkey')
+        batch_op.drop_constraint('fk_community_messages_author_user_id_user_accounts', type_='foreignkey')
+        batch_op.drop_index('ix_community_messages_author_user_id')
+        batch_op.drop_column('author_user_id')
+
+    with op.batch_alter_table('community_threads') as batch_op:
+        batch_op.drop_constraint('fk_community_threads_group_id_community_groups', type_='foreignkey')
+        batch_op.drop_constraint('fk_community_threads_created_by_user_id_user_accounts', type_='foreignkey')
+        batch_op.drop_index('ix_community_threads_created_by_user_id')
+        batch_op.drop_column('created_by_user_id')
+
+    with op.batch_alter_table('community_group_members') as batch_op:
+        batch_op.drop_constraint('fk_community_group_members_group_id_community_groups', type_='foreignkey')
+        batch_op.drop_constraint('fk_community_group_members_user_id_user_accounts', type_='foreignkey')
+        batch_op.drop_index('ix_community_group_members_user_id')
+        batch_op.drop_column('user_id')
+
+    with op.batch_alter_table('community_groups') as batch_op:
+        batch_op.drop_constraint('fk_community_groups_created_by_user_id_user_accounts', type_='foreignkey')
+        batch_op.drop_index('ix_community_groups_created_by_user_id')
+        batch_op.drop_column('created_by_user_id')

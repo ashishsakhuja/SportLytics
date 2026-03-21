@@ -41,25 +41,42 @@ def _clean_name(value: str, fallback: str = "Guest") -> str:
 
 
 
-def _is_member(db: Session, group_id: int, viewer: str) -> bool:
+def _viewer_identity(user: UserAccount | None, viewer: str = "") -> tuple[str, int | None]:
+    if user:
+        return _actor_name(user), user.id
+    return _clean_name(viewer, ""), None
+
+
+def _is_member(db: Session, group_id: int, viewer: str = "", viewer_user_id: int | None = None) -> bool:
+    query = db.query(CommunityGroupMember.id).filter(CommunityGroupMember.group_id == group_id)
+    if viewer_user_id is not None:
+        return query.filter(CommunityGroupMember.user_id == viewer_user_id).first() is not None
+
     viewer = _clean_name(viewer, "")
     if not viewer:
         return False
-    return db.query(CommunityGroupMember.id).filter(
-        CommunityGroupMember.group_id == group_id,
-        CommunityGroupMember.member_name == viewer,
-    ).first() is not None
+    return query.filter(CommunityGroupMember.member_name == viewer).first() is not None
 
 
-
+def _ensure_member_record(db: Session, group_id: int, *, user: UserAccount | None = None, viewer: str = "") -> None:
+    actor_name, actor_user_id = _viewer_identity(user, viewer)
+    existing = db.query(CommunityGroupMember.id).filter(CommunityGroupMember.group_id == group_id)
+    if actor_user_id is not None:
+        existing = existing.filter(CommunityGroupMember.user_id == actor_user_id)
+    else:
+        existing = existing.filter(CommunityGroupMember.member_name == actor_name)
+    if existing.first() is None:
+        db.add(CommunityGroupMember(group_id=group_id, member_name=actor_name or "Guest", user_id=actor_user_id))
 
 
 def _actor_name(user: UserAccount | None, fallback: str = "Guest") -> str:
     if user and getattr(user, "display_name", None):
         return _clean_name(user.display_name, fallback)
     return fallback
-def _ensure_access(db: Session, group: CommunityGroup, viewer: str) -> None:
-    if group.is_private and not _is_member(db, group.id, viewer):
+
+
+def _ensure_access(db: Session, group: CommunityGroup, viewer: str = "", viewer_user_id: int | None = None) -> None:
+    if group.is_private and not _is_member(db, group.id, viewer, viewer_user_id):
         raise HTTPException(status_code=403, detail="This private group requires membership.")
 
 
@@ -120,15 +137,17 @@ def _seed_if_empty(db: Session) -> None:
             sport=item["sport"],
             is_private=item["is_private"],
             created_by=item["created_by"],
+            created_by_user_id=None,
             created_at=now,
         )
         db.add(group)
         db.flush()
-        db.add(CommunityGroupMember(group_id=group.id, member_name=item["created_by"]))
+        db.add(CommunityGroupMember(group_id=group.id, member_name=item["created_by"], user_id=None))
         thread = CommunityThread(
             group_id=group.id,
             title=item["thread"]["title"],
             created_by=item["thread"]["author"],
+            created_by_user_id=None,
             is_private=item["is_private"],
             created_at=now,
             updated_at=now,
@@ -138,6 +157,7 @@ def _seed_if_empty(db: Session) -> None:
         db.add(CommunityMessage(
             thread_id=thread.id,
             author=item["thread"]["author"],
+            author_user_id=None,
             body=item["thread"]["body"],
             shared_plot_title=item["thread"]["shared_plot_title"],
             shared_plot_url=item["thread"]["shared_plot_url"],
@@ -147,7 +167,7 @@ def _seed_if_empty(db: Session) -> None:
 
 
 
-def _group_payload(db: Session, group: CommunityGroup, viewer: str) -> dict:
+def _group_payload(db: Session, group: CommunityGroup, viewer: str, viewer_user_id: int | None = None) -> dict:
     member_count = db.query(func.count(CommunityGroupMember.id)).filter(
         CommunityGroupMember.group_id == group.id
     ).scalar() or 0
@@ -167,7 +187,7 @@ def _group_payload(db: Session, group: CommunityGroup, viewer: str) -> dict:
         "created_at": group.created_at.isoformat() if group.created_at else None,
         "member_count": int(member_count),
         "thread_count": int(thread_count),
-        "is_member": _is_member(db, group.id, viewer),
+        "is_member": _is_member(db, group.id, viewer, viewer_user_id),
         "latest_thread_title": latest_thread.title if latest_thread else None,
         "latest_activity_at": (latest_thread.updated_at or latest_thread.created_at).isoformat() if latest_thread else None,
     }
@@ -271,11 +291,12 @@ def _ensure_sport_group(db: Session, *, sport: str, suffix: str, description: st
         sport=sport_upper,
         is_private=False,
         created_by="PulseTeam",
+        created_by_user_id=None,
         created_at=now,
     )
     db.add(group)
     db.flush()
-    db.add(CommunityGroupMember(group_id=group.id, member_name="PulseTeam"))
+    db.add(CommunityGroupMember(group_id=group.id, member_name="PulseTeam", user_id=None))
     db.flush()
     return group
 
@@ -343,7 +364,7 @@ class GroupCreate(BaseModel):
 
 
 class JoinGroupRequest(BaseModel):
-    viewer: str = Field(..., min_length=1, max_length=80)
+    viewer: str = Field(default="Guest", min_length=1, max_length=80)
 
 
 class ThreadCreate(BaseModel):
@@ -372,13 +393,13 @@ class AutoPostgameSyncRequest(BaseModel):
 @router.get('/groups')
 def list_groups(viewer: str = "", db: Session = Depends(get_db), user: UserAccount | None = Depends(get_current_user_optional)):
     _seed_if_empty(db)
-    viewer = _actor_name(user, _clean_name(viewer, ""))
+    viewer, viewer_user_id = _viewer_identity(user, viewer)
     groups = db.query(CommunityGroup).order_by(
         CommunityGroup.is_private.asc(),
         CommunityGroup.created_at.desc(),
     ).all()
-    visible = [g for g in groups if (not g.is_private) or _is_member(db, g.id, viewer)]
-    return {"items": [_group_payload(db, g, viewer) for g in visible]}
+    visible = [g for g in groups if (not g.is_private) or _is_member(db, g.id, viewer, viewer_user_id)]
+    return {"items": [_group_payload(db, g, viewer, viewer_user_id) for g in visible]}
 
 
 @router.post('/groups')
@@ -390,13 +411,14 @@ def create_group(payload: GroupCreate, db: Session = Depends(get_db), user: User
         sport=(payload.sport or "Mixed").strip()[:30],
         is_private=payload.is_private,
         created_by=creator,
+        created_by_user_id=user.id,
     )
     db.add(group)
     db.flush()
-    db.add(CommunityGroupMember(group_id=group.id, member_name=creator))
+    db.add(CommunityGroupMember(group_id=group.id, member_name=creator, user_id=user.id))
     db.commit()
     db.refresh(group)
-    return {"ok": True, "group": _group_payload(db, group, creator)}
+    return {"ok": True, "group": _group_payload(db, group, creator, user.id)}
 
 
 @router.post('/groups/{group_id}/join')
@@ -409,31 +431,30 @@ def join_group(
     group = db.get(CommunityGroup, group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
+    if group.is_private and not user:
+        raise HTTPException(status_code=401, detail="Sign in to join a private group")
 
-    viewer = _actor_name(user, _clean_name(payload.viewer))
-    exists = db.query(CommunityGroupMember.id).filter(
-        CommunityGroupMember.group_id == group_id,
-        CommunityGroupMember.member_name == viewer,
-    ).first()
-    if not exists:
-        db.add(CommunityGroupMember(group_id=group_id, member_name=viewer))
+    viewer, viewer_user_id = _viewer_identity(user, payload.viewer)
+    if not _is_member(db, group_id, viewer, viewer_user_id):
+        db.add(CommunityGroupMember(group_id=group_id, member_name=viewer or "Guest", user_id=viewer_user_id))
         db.commit()
         db.refresh(group)
 
-    return {"ok": True, "group": _group_payload(db, group, viewer)}
+    return {"ok": True, "group": _group_payload(db, group, viewer, viewer_user_id)}
 
 
 @router.get('/groups/{group_id}/threads')
 def list_threads(group_id: int, viewer: str = "", db: Session = Depends(get_db), user: UserAccount | None = Depends(get_current_user_optional)):
+    viewer, viewer_user_id = _viewer_identity(user, viewer)
     group = db.get(CommunityGroup, group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-    _ensure_access(db, group, viewer)
+    _ensure_access(db, group, viewer, viewer_user_id)
     threads = db.query(CommunityThread).filter(
         CommunityThread.group_id == group_id
     ).order_by(CommunityThread.updated_at.desc(), CommunityThread.created_at.desc()).all()
     return {
-        "group": _group_payload(db, group, viewer),
+        "group": _group_payload(db, group, viewer, viewer_user_id),
         "items": [_thread_payload(db, t) for t in threads],
     }
 
@@ -444,14 +465,15 @@ def create_thread(group_id: int, payload: ThreadCreate, db: Session = Depends(ge
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     author = _actor_name(user)
-    if group.is_private and not _is_member(db, group.id, author):
-        db.add(CommunityGroupMember(group_id=group.id, member_name=author))
+    if group.is_private and not _is_member(db, group.id, author, user.id):
+        _ensure_member_record(db, group.id, user=user, viewer=author)
         db.flush()
     now = datetime.utcnow()
     thread = CommunityThread(
         group_id=group.id,
         title=payload.title.strip(),
         created_by=author,
+        created_by_user_id=user.id,
         is_private=group.is_private or payload.is_private,
         created_at=now,
         updated_at=now,
@@ -461,6 +483,7 @@ def create_thread(group_id: int, payload: ThreadCreate, db: Session = Depends(ge
     db.add(CommunityMessage(
         thread_id=thread.id,
         author=author,
+        author_user_id=user.id,
         body=payload.body.strip(),
         shared_plot_title=(payload.shared_plot_title or "").strip() or None,
         shared_plot_url=(payload.shared_plot_url or "").strip() or None,
@@ -474,19 +497,19 @@ def create_thread(group_id: int, payload: ThreadCreate, db: Session = Depends(ge
 
 @router.get('/threads/{thread_id}')
 def get_thread(thread_id: int, viewer: str = "", db: Session = Depends(get_db), user: UserAccount | None = Depends(get_current_user_optional)):
-    viewer = _actor_name(user, _clean_name(viewer, ""))
+    viewer, viewer_user_id = _viewer_identity(user, viewer)
     thread = db.get(CommunityThread, thread_id)
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
     group = db.get(CommunityGroup, thread.group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-    _ensure_access(db, group, viewer)
+    _ensure_access(db, group, viewer, viewer_user_id)
     messages = db.query(CommunityMessage).filter(
         CommunityMessage.thread_id == thread_id
     ).order_by(CommunityMessage.created_at.asc()).all()
     return {
-        "group": _group_payload(db, group, viewer),
+        "group": _group_payload(db, group, viewer, viewer_user_id),
         "thread": _thread_payload(db, thread),
         "messages": [_message_payload(m) for m in messages],
     }
@@ -501,12 +524,13 @@ def create_message(thread_id: int, payload: MessageCreate, db: Session = Depends
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     author = _actor_name(user)
-    if group.is_private and not _is_member(db, group.id, author):
+    if group.is_private and not _is_member(db, group.id, author, user.id):
         raise HTTPException(status_code=403, detail="Join the private group before posting.")
     now = datetime.utcnow()
     message = CommunityMessage(
         thread_id=thread.id,
         author=author,
+        author_user_id=user.id,
         body=payload.body.strip(),
         shared_plot_title=(payload.shared_plot_title or "").strip() or None,
         shared_plot_url=(payload.shared_plot_url or "").strip() or None,
@@ -584,6 +608,7 @@ def sync_postgame_threads(payload: AutoPostgameSyncRequest, db: Session = Depend
             group_id=group.id,
             title=title,
             created_by=viewer or "PulseTeam",
+            created_by_user_id=None,
             is_private=False,
             auto_source_kind="postgame",
             auto_source_key=auto_key,
@@ -596,6 +621,7 @@ def sync_postgame_threads(payload: AutoPostgameSyncRequest, db: Session = Depend
         db.add(CommunityMessage(
             thread_id=thread.id,
             author="PulseTeam",
+            author_user_id=None,
             body=body,
             shared_plot_title=f"{sport.upper()} Dashboard",
             shared_plot_url=f"/dashboard/{sport}",
@@ -616,7 +642,7 @@ def sync_postgame_threads(payload: AutoPostgameSyncRequest, db: Session = Depend
 
 
 @router.get('/live/sidebar')
-def live_sidebar_threads(viewer: str = "Guest", limit: int = 8, db: Session = Depends(get_db)):
+def live_sidebar_threads(viewer: str = "Guest", limit: int = 8, db: Session = Depends(get_db), user: UserAccount | None = Depends(get_current_user_optional)):
     _seed_if_empty(db)
     now = datetime.utcnow()
     start_cutoff = now - timedelta(hours=6)
@@ -634,7 +660,7 @@ def live_sidebar_threads(viewer: str = "Guest", limit: int = 8, db: Session = De
     ).order_by(Game.game_date.asc()).limit(max(1, min(limit, 12))).all()
 
     items = []
-    clean_viewer = _clean_name(viewer)
+    clean_viewer, _ = _viewer_identity(user, viewer)
 
     for game in games:
         sport = (game.sport or "").lower().strip()
@@ -660,6 +686,7 @@ def live_sidebar_threads(viewer: str = "Guest", limit: int = 8, db: Session = De
                 group_id=group.id,
                 title=title,
                 created_by=clean_viewer or "PulseTeam",
+                created_by_user_id=None,
                 is_private=False,
                 auto_source_kind="live_game",
                 auto_source_key=auto_key,
@@ -671,6 +698,7 @@ def live_sidebar_threads(viewer: str = "Guest", limit: int = 8, db: Session = De
             db.add(CommunityMessage(
                 thread_id=thread.id,
                 author="PulseTeam",
+                author_user_id=None,
                 body=opener,
                 shared_plot_title=f"{sport.upper()} Dashboard",
                 shared_plot_url=_dashboard_href_for_game(game),
