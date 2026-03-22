@@ -353,23 +353,24 @@ export default function HeroLanding() {
               style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
             >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="max-w-3xl text-xs leading-6 text-white/50">
-                By selecting continue, you acknowledge this agreement and understand it may be updated as SportLytics features, data providers, community tools, and AI capabilities evolve.
-              </p>
-              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
-                <button
-                  onClick={() => setTosOpen(false)}
-                  className="w-full rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white sm:w-auto"
-                >
-                  Not now
-                </button>
-                <button
-                  onClick={handleAcceptAndContinue}
-                  disabled={!canContinue}
-                  className="w-full rounded-full border border-cyan-400/30 bg-cyan-500/12 px-5 py-2.5 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-500/18 disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto"
-                >
-                  Agree and continue
-                </button>
+                <p className="max-w-3xl text-xs leading-6 text-white/50">
+                  By selecting continue, you acknowledge this agreement and understand it may be updated as SportLytics features, data providers, community tools, and AI capabilities evolve.
+                </p>
+                <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
+                  <button
+                    onClick={() => setTosOpen(false)}
+                    className="w-full rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white sm:w-auto"
+                  >
+                    Not now
+                  </button>
+                  <button
+                    onClick={handleAcceptAndContinue}
+                    disabled={!canContinue}
+                    className="w-full rounded-full border border-cyan-400/30 bg-cyan-500/12 px-5 py-2.5 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-500/18 disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto"
+                  >
+                    Agree and continue
+                  </button>
+                </div>
               </div>
             </div>
           </div>
