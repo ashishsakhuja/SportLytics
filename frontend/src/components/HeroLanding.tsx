@@ -147,15 +147,12 @@ export default function HeroLanding() {
       if (event.key === "Escape") setTosOpen(false);
     };
 
-    const previousBodyOverflow = document.body.style.overflow;
-    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
     window.addEventListener("keydown", onKeyDown);
 
     return () => {
-      document.body.style.overflow = previousBodyOverflow;
-      document.documentElement.style.overflow = previousHtmlOverflow;
+      document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [tosOpen]);
@@ -185,16 +182,21 @@ export default function HeroLanding() {
   const modal = mounted && tosOpen
     ? createPortal(
         <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
+          className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto bg-black/70 px-3 backdrop-blur-sm sm:items-center sm:px-4"
+          style={{
+            paddingTop: "max(0.75rem, env(safe-area-inset-top))",
+            paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))",
+          }}
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setTosOpen(false);
           }}
         >
           <div
-            className="w-full max-w-5xl overflow-hidden rounded-[30px] border border-white/10 bg-[#09090d] shadow-[0_24px_90px_rgba(0,0,0,0.72)]"
+            className="flex w-full max-w-5xl flex-col overflow-hidden rounded-[24px] border border-white/10 bg-[#09090d] shadow-[0_24px_90px_rgba(0,0,0,0.72)] sm:rounded-[30px]"
+            style={{ maxHeight: "calc(100dvh - max(1.5rem, env(safe-area-inset-top) + env(safe-area-inset-bottom)))" }}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <div className="border-b border-white/10 bg-gradient-to-r from-cyan-500/10 via-fuchsia-500/10 to-transparent px-6 py-5 sm:px-8">
+            <div className="shrink-0 border-b border-white/10 bg-gradient-to-r from-cyan-500/10 via-fuchsia-500/10 to-transparent px-5 py-4 sm:px-8 sm:py-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <div className="text-[11px] font-semibold uppercase tracking-[0.26em] text-cyan-200/70">
@@ -216,7 +218,7 @@ export default function HeroLanding() {
               </div>
             </div>
 
-            <div className="max-h-[70vh] overflow-y-auto px-6 py-6 sm:px-8">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-8 sm:py-6">
               <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
                 <div className="space-y-6">
                   <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
@@ -346,21 +348,25 @@ export default function HeroLanding() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 border-t border-white/10 px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+            <div
+              className="shrink-0 border-t border-white/10 bg-[#09090d]/95 px-5 pt-4 sm:px-8 sm:pt-5"
+              style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="max-w-3xl text-xs leading-6 text-white/50">
                 By selecting continue, you acknowledge this agreement and understand it may be updated as SportLytics features, data providers, community tools, and AI capabilities evolve.
               </p>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">
                 <button
                   onClick={() => setTosOpen(false)}
-                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white"
+                  className="w-full rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white sm:w-auto"
                 >
                   Not now
                 </button>
                 <button
                   onClick={handleAcceptAndContinue}
                   disabled={!canContinue}
-                  className="rounded-full border border-cyan-400/30 bg-cyan-500/12 px-5 py-2.5 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-500/18 disabled:cursor-not-allowed disabled:opacity-45"
+                  className="w-full rounded-full border border-cyan-400/30 bg-cyan-500/12 px-5 py-2.5 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-500/18 disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto"
                 >
                   Agree and continue
                 </button>
@@ -374,13 +380,13 @@ export default function HeroLanding() {
 
   return (
     <>
-      <main className="relative min-h-screen overflow-x-hidden overflow-y-clip bg-black text-white">
+      <main className="relative min-h-screen bg-black text-white">
         <div className="absolute top-0 left-0 right-0 h-16 opacity-80 z-[2]">
           <div className="absolute inset-0 bg-gradient-to-b from-white/15 via-cyan-400/15 to-transparent blur-xl" />
           <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
         </div>
 
-        <motion.div className="pointer-events-none absolute inset-0 z-[0] overflow-hidden" style={{ x: sx, y: sy }}>
+        <motion.div className="absolute inset-0 z-[0]" style={{ x: sx, y: sy }}>
           <motion.div
             className="absolute -top-32 -left-52 h-[600px] w-[800px] blur-2xl opacity-70"
             style={{
