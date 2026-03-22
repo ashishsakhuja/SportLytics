@@ -19,6 +19,7 @@ from app.services.espn_summary import fetch_espn_summary, parse_team_boxscore_st
 from app.services.run_ingest import run_all as run_news_ingest
 
 SUPPORTED_SPORTS = ("nfl", "nba", "mlb", "nhl")
+VALID_NFL_SEASON_TYPES = ("PRE", "REG", "POST")
 
 
 @dataclass
@@ -65,6 +66,33 @@ def _infer_nfl_season_types(today: date) -> list[str]:
     if m in (1, 2):
         return ["REG", "POST"]
     return ["POST"]
+
+
+def _parse_nfl_season_types(raw: str | None, *, default: Iterable[str]) -> list[str]:
+    tokens = [s.strip().upper() for s in (raw or ",".join(default)).split(",") if s.strip()]
+    invalid = [t for t in tokens if t not in VALID_NFL_SEASON_TYPES]
+    if invalid:
+        raise SystemExit(
+            f"Unsupported NFL season types: {', '.join(invalid)}. "
+            f"Use only: {', '.join(VALID_NFL_SEASON_TYPES)}"
+        )
+    deduped: list[str] = []
+    for token in tokens:
+        if token not in deduped:
+            deduped.append(token)
+    return deduped
+
+
+def _nfl_seasons_for_range(start: date, end: date) -> list[int]:
+    """
+    Return every NFL season that could overlap the requested date range.
+
+    NFL seasons span roughly Jul/Preseason -> Feb/Postseason, so a wide date
+    range can overlap multiple season years.
+    """
+    season_start = start.year if start.month >= 7 else start.year - 1
+    season_end = end.year if end.month >= 7 else end.year - 1
+    return list(range(season_start, season_end + 1))
 
 
 async def _run_nfl(season: int, season_types: Iterable[str]) -> None:
@@ -199,8 +227,14 @@ async def main_async(args) -> int:
     if start > end:
         raise SystemExit("Resolved start date is after end date.")
 
-    nfl_season = args.nfl_season or _infer_nfl_season(today)
-    nfl_types = [s.strip().upper() for s in (args.nfl_season_types or ",".join(_infer_nfl_season_types(today))).split(",") if s.strip()]
+    if args.nfl_season:
+        nfl_seasons = [args.nfl_season]
+        nfl_default_types = _infer_nfl_season_types(today)
+    else:
+        nfl_seasons = _nfl_seasons_for_range(start, end)
+        nfl_default_types = VALID_NFL_SEASON_TYPES
+
+    nfl_types = _parse_nfl_season_types(args.nfl_season_types, default=nfl_default_types)
 
     log(
         "SYNC_LATEST starting "
@@ -213,8 +247,15 @@ async def main_async(args) -> int:
     for sport in sports:
         try:
             if sport == "nfl":
-                await _run_nfl(nfl_season, nfl_types)
-                results.append(TaskResult(name=f"games:{sport}", ok=True, detail=f"season={nfl_season} types={','.join(nfl_types)}"))
+                for nfl_season in nfl_seasons:
+                    await _run_nfl(nfl_season, nfl_types)
+                results.append(
+                    TaskResult(
+                        name=f"games:{sport}",
+                        ok=True,
+                        detail=f"seasons={','.join(str(s) for s in nfl_seasons)} types={','.join(nfl_types)}",
+                    )
+                )
             else:
                 await _run_dated_sport(sport, start, end)
                 results.append(TaskResult(name=f"games:{sport}", ok=True, detail=f"range={start.isoformat()}..{end.isoformat()}"))
@@ -258,58 +299,44 @@ async def main_async(args) -> int:
         log(f"  - {status:<6} {r.name} {r.detail}")
 
     log(f"SYNC_LATEST done failures={failures}")
-    return 1 if failures else 0
+    return 1 if (args.strict and failures) else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        description="Single command to sync latest games, news, and recent team-game stats for SportLytics."
-    )
-    p.add_argument("--sports", type=str, default="nfl,nba,mlb,nhl", help="Comma-separated sports to sync.")
-    p.add_argument("--from-date", type=str, default=None, help="Override start date for NBA/MLB/NHL in YYYY-MM-DD.")
-    p.add_argument("--to-date", type=str, default=None, help="Override end date for NBA/MLB/NHL in YYYY-MM-DD.")
-    p.add_argument("--days-back", type=int, default=3, help="Default dated-sport lookback window when --from-date is omitted.")
-    p.add_argument("--days-forward", type=int, default=7, help="Default dated-sport lookahead window when --to-date is omitted.")
-    p.add_argument("--nfl-season", type=int, default=None, help="Override NFL season year. Defaults to inferred current season.")
+    p = argparse.ArgumentParser(description="Run latest SportLytics game/news/stats sync.")
+    p.add_argument("--sports", type=str, default=",".join(SUPPORTED_SPORTS), help="Comma-separated sports: nfl,nba,mlb,nhl")
+    p.add_argument("--from-date", type=str, default=None, help="YYYY-MM-DD")
+    p.add_argument("--to-date", type=str, default=None, help="YYYY-MM-DD")
+    p.add_argument("--days-back", type=int, default=30, help="Used if --from-date omitted")
+    p.add_argument("--days-forward", type=int, default=3, help="Used if --to-date omitted")
+
+    p.add_argument("--nfl-season", type=int, default=None, help="Override NFL season year (e.g. 2025)")
     p.add_argument(
         "--nfl-season-types",
         type=str,
         default=None,
-        help="Comma-separated NFL season types. Defaults to a month-based auto choice like REG or REG,POST.",
+        help="Comma-separated NFL season types. Use PRE,REG,POST. If omitted and no season is forced, all three are used for range backfills.",
     )
-    p.add_argument("--skip-news", action="store_true", help="Skip news RSS ingest.")
-    p.add_argument("--skip-stats", action="store_true", help="Skip recent team_game_stats refresh.")
-    p.add_argument(
-        "--stats-lookback-days",
-        type=int,
-        default=10,
-        help="Refresh team_game_stats for live/final games in the last N days.",
-    )
-    p.add_argument(
-        "--stats-only-final",
-        action="store_true",
-        help="Only refresh team_game_stats for final games, not live ones.",
-    )
-    p.add_argument(
-        "--stats-sleep",
-        type=float,
-        default=0.15,
-        help="Sleep between ESPN summary calls for recent team_game_stats refresh.",
-    )
-    p.add_argument(
-        "--strict",
-        action="store_true",
-        help="Exit on the first task failure instead of continuing with the rest.",
-    )
+
+    p.add_argument("--skip-news", action="store_true")
+    p.add_argument("--skip-stats", action="store_true")
+    p.add_argument("--strict", action="store_true", help="Stop on first task failure and return non-zero")
+
+    p.add_argument("--stats-lookback-days", type=int, default=30)
+    p.add_argument("--stats-only-final", action="store_true", help="Only refresh stats for final games")
+    p.add_argument("--stats-sleep", type=float, default=0.10, help="Sleep between ESPN summary calls")
     return p
 
 
-def main() -> None:
+def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    code = asyncio.run(main_async(args))
-    raise SystemExit(code)
+    try:
+        return asyncio.run(main_async(args))
+    except KeyboardInterrupt:
+        log("SYNC_LATEST interrupted")
+        return 130
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
