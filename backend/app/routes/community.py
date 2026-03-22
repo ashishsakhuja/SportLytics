@@ -120,11 +120,11 @@ def _seed_if_empty(db: Session) -> None:
             "description": "Private room for your own plot shares and pick discussion.",
             "sport": "Mixed",
             "is_private": True,
-            "created_by": "Ash",
+            "created_by": "SportLytics",
             "thread": {
                 "title": "Sunday locks",
                 "body": "Keep private slate notes and shared plots in here.",
-                "author": "Ash",
+                "author": "SportLytics",
                 "shared_plot_title": None,
                 "shared_plot_url": None,
             },

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { apiGet, apiPost } from "@/lib/api";
 import Sparkline from "@/components/Sparkline";
 import { clearAuthSession, getStoredUser, setStoredUser, type AuthUser } from "@/lib/auth";
+import { getGuestIdentity } from "@/lib/guestIdentity";
 
 type NewsItem = {
   id: number;
@@ -359,10 +360,11 @@ export default function GeneralDashboard() {
     setLoading(true);
     setErr(null);
     try {
+      const viewer = getStoredUser()?.display_name || getGuestIdentity();
       const [ms, mh, live] = await Promise.all([
         apiGet<MetaSportsResponse>("/meta/sports"),
         apiGet<MetaHealthResponse>("/meta/health"),
-        apiGet<{ items: LiveSidebarItem[] }>("/community/live/sidebar?viewer=Ash&limit=6"),
+        apiGet<{ items: LiveSidebarItem[] }>(`/community/live/sidebar?viewer=${encodeURIComponent(viewer)}&limit=6`),
       ]);
       setMetaSports(ms);
       setHealth(mh);

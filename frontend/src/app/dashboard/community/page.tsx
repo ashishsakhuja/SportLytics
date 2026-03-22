@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiGet, apiPost } from "@/lib/api";
 import { getStoredUser, clearAuthSession, type AuthUser } from "@/lib/auth";
+import { getGuestIdentity } from "@/lib/guestIdentity";
 
 type Group = {
   id: number;
@@ -154,7 +155,7 @@ function PlotAttachmentCard({
 
 export default function CommunityPage() {
   const router = useRouter();
-  const [viewer, setViewer] = useState("Ash");
+  const [viewer, setViewer] = useState("");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [viewerReady, setViewerReady] = useState(false);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -208,6 +209,8 @@ export default function CommunityPage() {
     const stored = window.localStorage.getItem("sportlytics.community.viewer");
     if (stored && stored.trim()) {
       setViewer(stored.trim());
+    } else {
+      setViewer(getGuestIdentity());
     }
 
     const params = new URLSearchParams(window.location.search);
@@ -248,7 +251,7 @@ export default function CommunityPage() {
 
   useEffect(() => {
     if (!viewerReady) return;
-    const clean = viewer.trim() || "Ash";
+    const clean = viewer.trim() || getGuestIdentity();
     window.localStorage.setItem("sportlytics.community.viewer", clean);
   }, [viewer, viewerReady]);
 
@@ -294,7 +297,7 @@ export default function CommunityPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiGet<{ items: Group[] }>(`/community/groups?viewer=${encodeURIComponent(viewer.trim() || "Ash")}`);
+      const res = await apiGet<{ items: Group[] }>(`/community/groups?viewer=${encodeURIComponent(viewer.trim() || getGuestIdentity())}`);
       setGroups(res.items);
       const nextGroupId = preferredGroupId ?? res.items[0]?.id ?? null;
       setSelectedGroupId(nextGroupId);
@@ -314,7 +317,7 @@ export default function CommunityPage() {
 
   async function loadThreads(groupId: number, preferredThreadId?: number | null) {
     try {
-      const res = await apiGet<{ group: Group; items: Thread[] }>(`/community/groups/${groupId}/threads?viewer=${encodeURIComponent(viewer.trim() || "Ash")}`);
+      const res = await apiGet<{ group: Group; items: Thread[] }>(`/community/groups/${groupId}/threads?viewer=${encodeURIComponent(viewer.trim() || getGuestIdentity())}`);
       setThreads(res.items);
       const nextThreadId = preferredThreadId ?? res.items[0]?.id ?? null;
       setSelectedThreadId(nextThreadId);
@@ -333,7 +336,7 @@ export default function CommunityPage() {
 
   async function loadMessages(threadId: number) {
     try {
-      const res = await apiGet<{ messages: Message[] }>(`/community/threads/${threadId}?viewer=${encodeURIComponent(viewer.trim() || "Ash")}`);
+      const res = await apiGet<{ messages: Message[] }>(`/community/threads/${threadId}?viewer=${encodeURIComponent(viewer.trim() || getGuestIdentity())}`);
       setMessages(res.messages);
     } catch (e: any) {
       setMessages([]);
@@ -386,7 +389,7 @@ export default function CommunityPage() {
     setError(null);
     setSyncNote(null);
     try {
-      await apiPost(`/community/groups/${groupId}/join`, { viewer: viewer.trim() || "Ash" });
+      await apiPost(`/community/groups/${groupId}/join`, { viewer: viewer.trim() || getGuestIdentity() });
       await loadGroups(groupId, selectedThreadId);
     } catch (e: any) {
       setError(e?.message ?? "Failed to join group");
@@ -455,7 +458,7 @@ export default function CommunityPage() {
     setSyncNote(null);
     try {
       const res = await apiPost<AutoSyncResponse>("/community/auto/postgames/sync", {
-        viewer: viewer.trim() || "Ash",
+        viewer: viewer.trim() || getGuestIdentity(),
         sport: autoSport === "all" ? null : autoSport,
         lookback_days: lookbackDays,
         limit: 60,
@@ -830,7 +833,7 @@ export default function CommunityPage() {
             <div className="mt-4 space-y-3">
               {messages.map((msg, index) => {
                 const currentIdentity = authUser?.display_name || viewer;
-                const isViewer = msg.author.trim().toLowerCase() === (currentIdentity.trim() || "Ash").toLowerCase();
+                const isViewer = msg.author.trim().toLowerCase() === (currentIdentity.trim() || getGuestIdentity()).toLowerCase();
                 const plotTitle = msg.shared_plot_title || msg.shared_plot_payload?.chart_title || null;
                 return (
                   <div
