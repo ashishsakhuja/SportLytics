@@ -147,12 +147,15 @@ export default function HeroLanding() {
       if (event.key === "Escape") setTosOpen(false);
     };
 
-    const previousOverflow = document.body.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
     document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
     window.addEventListener("keydown", onKeyDown);
 
     return () => {
-      document.body.style.overflow = previousOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [tosOpen]);
@@ -371,13 +374,13 @@ export default function HeroLanding() {
 
   return (
     <>
-      <main className="relative min-h-screen bg-black text-white">
+      <main className="relative min-h-screen overflow-x-hidden overflow-y-clip bg-black text-white">
         <div className="absolute top-0 left-0 right-0 h-16 opacity-80 z-[2]">
           <div className="absolute inset-0 bg-gradient-to-b from-white/15 via-cyan-400/15 to-transparent blur-xl" />
           <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
         </div>
 
-        <motion.div className="absolute inset-0 z-[0]" style={{ x: sx, y: sy }}>
+        <motion.div className="pointer-events-none absolute inset-0 z-[0] overflow-hidden" style={{ x: sx, y: sy }}>
           <motion.div
             className="absolute -top-32 -left-52 h-[600px] w-[800px] blur-2xl opacity-70"
             style={{
