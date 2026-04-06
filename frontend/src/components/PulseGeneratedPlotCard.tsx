@@ -43,7 +43,10 @@ type Props = {
   team?: string | null;
 };
 
-type PlotRow = Record<string, string | number | null> & {
+type PlotDatum = Record<string, string | number | null>;
+
+type PlotRow = {
+  [key: string]: unknown;
   __raw__?: Record<string, number | null>;
 };
 
@@ -63,16 +66,13 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function collectSeriesValues(rows: Array<Record<string, string | number | null>>, series: PlotSeries[]) {
+function collectSeriesValues(rows: PlotDatum[], series: PlotSeries[]) {
   return rows.flatMap((row) =>
     series.map((item) => row[item.key]).filter((value): value is number => isFiniteNumber(value))
   );
 }
 
-function buildNumericDomain(
-  rows: Array<Record<string, string | number | null>>,
-  series: PlotSeries[]
-): [number | "auto", number | "auto"] {
+function buildNumericDomain(rows: PlotDatum[], series: PlotSeries[]): [number | "auto", number | "auto"] {
   const values = collectSeriesValues(rows, series);
   if (!values.length) return ["auto", "auto"];
 
@@ -89,10 +89,7 @@ function buildNumericDomain(
   return [Math.min(0, min - pad), Math.max(0, max + pad)];
 }
 
-function buildMagnitudeDomain(
-  rows: Array<Record<string, string | number | null>>,
-  series: PlotSeries[]
-): [number, number] {
+function buildMagnitudeDomain(rows: PlotDatum[], series: PlotSeries[]): [number, number] {
   const values = collectSeriesValues(rows, series).map((v) => Math.abs(v));
   if (!values.length) return [0, 1];
 
@@ -121,7 +118,9 @@ function SharedTooltip({
       <div className="mt-2 space-y-1.5 text-xs text-white/75">
         {payload.map((entry: any) => {
           const rawValue =
-            useRawValues && entry?.payload?.__raw__ ? entry.payload.__raw__[entry.dataKey] : entry.value;
+            useRawValues && entry?.payload?.__raw__
+              ? entry.payload.__raw__[entry.dataKey]
+              : entry.value;
 
           return (
             <div key={entry.dataKey} className="flex items-center justify-between gap-4">
@@ -161,7 +160,7 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
 
   const series = useMemo(() => plot.series || [], [plot.series]);
 
-  const normalizedData = useMemo(
+  const normalizedData = useMemo<PlotDatum[]>(
     () =>
       (plot.data || []).filter((row) => series.some((item) => isFiniteNumber(row[item.key]))),
     [plot.data, series]
@@ -172,7 +171,7 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
   const allNegativeBarChart =
     plot.kind === "bar" && rawValues.length > 0 && rawValues.every((value) => value < 0);
 
-  const displayData: PlotRow[] = useMemo(() => {
+  const displayData = useMemo(() => {
     if (!allNegativeBarChart) {
       return normalizedData.map((row) => {
         const raw: Record<string, number | null> = {};
@@ -184,7 +183,7 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
     }
 
     return normalizedData.map((row) => {
-      const next: PlotRow = { ...row };
+      const next: Record<string, string | number | null> = { ...row };
       const raw: Record<string, number | null> = {};
 
       series.forEach((item) => {
@@ -198,8 +197,7 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
         }
       });
 
-      next.__raw__ = raw;
-      return next;
+      return { ...next, __raw__: raw };
     });
   }, [allNegativeBarChart, normalizedData, series]);
 
