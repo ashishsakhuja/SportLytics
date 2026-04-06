@@ -55,6 +55,35 @@ function valueText(value: unknown) {
   return typeof value === "number" ? value.toFixed(2) : String(value ?? "—");
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function buildNumericDomain(
+  rows: Array<Record<string, string | number | null>>,
+  series: PlotSeries[]
+): [number | "auto", number | "auto"] {
+  const values = rows.flatMap((row) =>
+    series
+      .map((item) => row[item.key])
+      .filter((value): value is number => isFiniteNumber(value))
+  );
+
+  if (!values.length) return ["auto", "auto"];
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+
+  if (min === max) {
+    const pad = Math.abs(min || 1) * 0.15 || 1;
+    return [Math.min(0, min - pad), Math.max(0, max + pad)];
+  }
+
+  const span = max - min;
+  const pad = span * 0.12;
+  return [Math.min(0, min - pad), Math.max(0, max + pad)];
+}
+
 function SharedTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
 
@@ -96,6 +125,14 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
   const [status, setStatus] = useState<string | null>(null);
 
   const series = useMemo(() => plot.series || [], [plot.series]);
+  const normalizedData = useMemo(
+    () =>
+      (plot.data || []).filter((row) =>
+        series.some((item) => isFiniteNumber(row[item.key]))
+      ),
+    [plot.data, series]
+  );
+  const yDomain = useMemo(() => buildNumericDomain(normalizedData, series), [normalizedData, series]);
   const colorMap = useMemo(
     () =>
       Object.fromEntries(series.map((item, idx) => [item.key, SERIES_COLORS[idx % SERIES_COLORS.length]])),
@@ -174,8 +211,8 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
         <div>
           <h3 className="text-base font-semibold text-white">{plot.title}</h3>
           {plot.subtitle ? <div className="mt-1 text-sm text-white/65">{plot.subtitle}</div> : null}
-          {(plot.data.some((row) => String(row.label ?? "").toLowerCase() === "previous 5") ||
-            plot.data.some((row) => String(row.label ?? "").toLowerCase() === "last 5")) ? (
+          {(normalizedData.some((row) => String(row.label ?? "").toLowerCase() === "previous 5") ||
+            normalizedData.some((row) => String(row.label ?? "").toLowerCase() === "last 5")) ? (
             <div className="mt-2 text-xs text-white/45">
               “Most recent 5” means the latest five games. “Games 6–10 ago” is the five right before that.
             </div>
@@ -204,7 +241,7 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
         <div className="h-[320px] w-full">
           <ResponsiveContainer width="100%" height="100%">
             {plot.kind === "line" ? (
-              <LineChart data={plot.data} margin={{ top: 10, right: 20, left: 0, bottom: 8 }}>
+              <LineChart data={normalizedData} margin={{ top: 10, right: 20, left: 8, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                 <XAxis
                   dataKey="label"
@@ -214,6 +251,8 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
                   tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
                 />
                 <YAxis
+                  domain={yDomain}
+                  allowDataOverflow={false}
                   tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
                   axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
                   tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
@@ -234,7 +273,7 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
                 ))}
               </LineChart>
             ) : (
-              <BarChart data={plot.data} margin={{ top: 10, right: 20, left: 0, bottom: 8 }} barGap={10}>
+              <BarChart data={normalizedData} margin={{ top: 10, right: 20, left: 8, bottom: 8 }} barGap={10}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.25} vertical={false} />
                 <XAxis
                   dataKey="label"
@@ -244,6 +283,8 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
                   tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
                 />
                 <YAxis
+                  domain={yDomain}
+                  allowDataOverflow={false}
                   tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
                   axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
                   tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
@@ -252,7 +293,7 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
                 <Legend wrapperStyle={{ paddingTop: 14 }} formatter={legendFormatter} />
                 {series.map((item) => (
                   <Bar key={item.key} dataKey={item.key} name={item.label} shape={renderRoundedBar}>
-                    {plot.data.map((_, index) => (
+                    {normalizedData.map((_, index) => (
                       <Cell key={`${item.key}-${index}`} fill={colorMap[item.key]} />
                     ))}
                   </Bar>

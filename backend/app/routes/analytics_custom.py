@@ -45,6 +45,20 @@ def _allowed_team_codes_for_sport(sport: str) -> set[str]:
     return set(_ALLOWED_TEAM_CODES.get((sport or "").lower().strip(), set()))
 
 
+def _canonical_team_code(sport: str, code: Optional[str]) -> str:
+    c = (code or "").upper().strip()
+    if sport == "nfl":
+        return {"WSH": "WAS"}.get(c, c)
+    return c
+
+
+def _team_code_variants(sport: str, code: Optional[str]) -> List[str]:
+    canonical = _canonical_team_code(sport, code)
+    if sport == "nfl" and canonical == "WAS":
+        return ["WAS", "WSH"]
+    return [canonical] if canonical else []
+
+
 def _available_seasons(db: Session, sport: str, season_type: str) -> List[int]:
     rows = (
         db.query(Game.season)
@@ -279,11 +293,11 @@ def _safe_series_key(prefix: str, value: str) -> str:
 
 
 
-def _parse_team_list(primary_team: str, overlay_teams: Optional[str]) -> List[str]:
+def _parse_team_list(sport: str, primary_team: str, overlay_teams: Optional[str]) -> List[str]:
     out: List[str] = []
     seen = set()
     for raw in [primary_team, *(((overlay_teams or "").split(",")) if overlay_teams else [])]:
-        t = (raw or "").upper().strip()
+        t = _canonical_team_code(sport, raw)
         if not t or t in seen:
             continue
         seen.add(t)
@@ -317,13 +331,16 @@ def _rows_for_team_metric(
 ) -> List[Dict[str, Any]]:
     seasons = _season_range(season_from, season_to)
 
+    canonical_team_code = _canonical_team_code(sport, team_code)
+    team_variants = _team_code_variants(sport, canonical_team_code)
+
     rows = (
         db.query(Game, TeamGameStats)
         .outerjoin(
             TeamGameStats,
             sa.and_(
                 TeamGameStats.game_id == Game.id,
-                TeamGameStats.team_code == team_code,
+                TeamGameStats.team_code.in_(team_variants),
                 TeamGameStats.sport == sport,
             ),
         )
@@ -332,7 +349,7 @@ def _rows_for_team_metric(
             Game.season.in_(seasons),
             Game.season_type == season_type,
             _finalish_filter(),
-            sa.or_(Game.home_team_code == team_code, Game.away_team_code == team_code),
+            sa.or_(Game.home_team_code.in_(team_variants), Game.away_team_code.in_(team_variants)),
         )
         .order_by(Game.season.asc(), Game.game_date.asc().nullslast(), Game.id.asc())
         .all()
@@ -340,7 +357,7 @@ def _rows_for_team_metric(
 
     out: List[Dict[str, Any]] = []
     for idx, (g, tgs) in enumerate(rows, start=1):
-        is_home = (g.home_team_code or "").upper() == team_code
+        is_home = (g.home_team_code or "").upper() in team_variants
         opp = (g.away_team_code if is_home else g.home_team_code) or ""
         pf = g.home_score if is_home else g.away_score
         pa = g.away_score if is_home else g.home_score
@@ -354,13 +371,13 @@ def _rows_for_team_metric(
             else:
                 result_label = "T"
 
-        value = _metric_value(metric, team_code, g, tgs.stats if tgs else None)
+        value = _metric_value(metric, canonical_team_code, g, tgs.stats if tgs else None)
         row = {
             "idx": idx,
             "season": g.season,
             "date": g.game_date.date().isoformat() if g.game_date else None,
             "game_id": g.id,
-            "team": team_code,
+            "team": canonical_team_code,
             "opponent": (opp or "").upper(),
             "home_away": "home" if is_home else "away",
             "result": result_label,
@@ -404,7 +421,7 @@ def _rows_for_league_average(
     for g, tgs in rows:
         if g.season is None:
             continue
-        team_code = (tgs.team_code or "").upper()
+        team_code = _canonical_team_code(sport, (tgs.team_code or "").upper())
         value = _metric_value(metric, team_code, g, tgs.stats if tgs else None)
         if value is not None:
             season_vals[int(g.season)].append(float(value))
@@ -579,7 +596,15 @@ def custom_builder_options(
     teams = db.query(Team).filter(Team.sport == sport).order_by(Team.team_code.asc()).all()
     allowed = _allowed_team_codes_for_sport(sport)
     if allowed:
-        teams = [t for t in teams if (t.team_code or "").upper().strip() in allowed] or teams
+        teams = [t for t in teams if _canonical_team_code(sport, t.team_code) in allowed] or teams
+
+    deduped_teams: Dict[str, Team] = {}
+    for t in teams:
+        canonical_code = _canonical_team_code(sport, t.team_code)
+        existing = deduped_teams.get(canonical_code)
+        if existing is None or (t.team_code or "").upper().strip() == canonical_code:
+            deduped_teams[canonical_code] = t
+    teams = [deduped_teams[key] for key in sorted(deduped_teams.keys())]
     seasons = _available_seasons(db, sport, season_type)
     requested_season = season if season in seasons else (seasons[0] if seasons else season)
     metrics = _discover_metric_keys(db, sport, requested_season, season_type)
@@ -593,7 +618,7 @@ def custom_builder_options(
         "max_overlay_teams": MAX_OVERLAY_TEAMS,
         "teams": [
             {
-                "team_code": t.team_code,
+                "team_code": _canonical_team_code(sport, t.team_code),
                 "name": t.name,
                 "city": t.city,
                 "label": f"{t.city} {t.name}".strip() if t.city else t.name,
@@ -647,7 +672,7 @@ def custom_builder_plot(
     db: Session = Depends(get_db),
 ):
     sport = _norm_sport(sport)
-    team = (team or "").upper().strip()
+    team = _canonical_team_code(sport, team)
     season_type = _norm_season_type(season_type)
     compare_mode = (compare_mode or "none").strip().lower()
     granularity = (granularity or "game").strip().lower()
@@ -671,7 +696,7 @@ def custom_builder_plot(
     if compare_mode == "metric" and not secondary_metric:
         raise HTTPException(status_code=400, detail="secondary_metric is required when compare_mode=metric")
 
-    teams = _parse_team_list(team, overlay_teams)
+    teams = _parse_team_list(sport, team, overlay_teams)
     if not teams:
         raise HTTPException(status_code=400, detail="A primary team is required")
 
