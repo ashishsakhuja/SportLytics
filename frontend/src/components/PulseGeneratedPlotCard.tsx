@@ -43,6 +43,10 @@ type Props = {
   team?: string | null;
 };
 
+type PlotRow = Record<string, string | number | null> & {
+  __raw__?: Record<string, number | null>;
+};
+
 function normalizeBucketLabel(label: string) {
   const raw = String(label || "").trim();
   const lower = raw.toLowerCase();
@@ -59,16 +63,17 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function collectSeriesValues(rows: Array<Record<string, string | number | null>>, series: PlotSeries[]) {
+  return rows.flatMap((row) =>
+    series.map((item) => row[item.key]).filter((value): value is number => isFiniteNumber(value))
+  );
+}
+
 function buildNumericDomain(
   rows: Array<Record<string, string | number | null>>,
   series: PlotSeries[]
 ): [number | "auto", number | "auto"] {
-  const values = rows.flatMap((row) =>
-    series
-      .map((item) => row[item.key])
-      .filter((value): value is number => isFiniteNumber(value))
-  );
-
+  const values = collectSeriesValues(rows, series);
   if (!values.length) return ["auto", "auto"];
 
   const min = Math.min(...values);
@@ -84,25 +89,53 @@ function buildNumericDomain(
   return [Math.min(0, min - pad), Math.max(0, max + pad)];
 }
 
-function SharedTooltip({ active, payload, label }: any) {
+function buildMagnitudeDomain(
+  rows: Array<Record<string, string | number | null>>,
+  series: PlotSeries[]
+): [number, number] {
+  const values = collectSeriesValues(rows, series).map((v) => Math.abs(v));
+  if (!values.length) return [0, 1];
+
+  const max = Math.max(...values);
+  if (max === 0) return [0, 1];
+
+  return [0, max * 1.08];
+}
+
+function SharedTooltip({
+  active,
+  payload,
+  label,
+  useRawValues = false,
+}: {
+  active?: boolean;
+  payload?: any[];
+  label?: string;
+  useRawValues?: boolean;
+}) {
   if (!active || !payload?.length) return null;
 
   return (
     <div className="rounded-xl border border-white/15 bg-black/90 px-3 py-2 text-sm text-white shadow-2xl backdrop-blur-sm">
       <div className="font-semibold text-white">{normalizeBucketLabel(String(label ?? ""))}</div>
       <div className="mt-2 space-y-1.5 text-xs text-white/75">
-        {payload.map((entry: any) => (
-          <div key={entry.dataKey} className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <span
-                className="h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: entry.color || entry.fill || "#fff" }}
-              />
-              <span>{entry.name}</span>
+        {payload.map((entry: any) => {
+          const rawValue =
+            useRawValues && entry?.payload?.__raw__ ? entry.payload.__raw__[entry.dataKey] : entry.value;
+
+          return (
+            <div key={entry.dataKey} className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: entry.color || entry.fill || "#fff" }}
+                />
+                <span>{entry.name}</span>
+              </div>
+              <span className="font-medium text-white">{valueText(rawValue)}</span>
             </div>
-            <span className="font-medium text-white">{valueText(entry.value)}</span>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -115,8 +148,10 @@ function legendFormatter(value: string) {
 function renderRoundedBar(props: any) {
   const { fill, x, y, width, height, value } = props;
   if (width == null || height == null || x == null || y == null) return null;
+
   const radius: [number, number, number, number] =
     typeof value === "number" && value < 0 ? [0, 0, 10, 10] : [10, 10, 0, 0];
+
   return <Rectangle x={x} y={y} width={width} height={height} fill={fill} radius={radius} />;
 }
 
@@ -125,14 +160,54 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
   const [status, setStatus] = useState<string | null>(null);
 
   const series = useMemo(() => plot.series || [], [plot.series]);
+
   const normalizedData = useMemo(
     () =>
-      (plot.data || []).filter((row) =>
-        series.some((item) => isFiniteNumber(row[item.key]))
-      ),
+      (plot.data || []).filter((row) => series.some((item) => isFiniteNumber(row[item.key]))),
     [plot.data, series]
   );
-  const yDomain = useMemo(() => buildNumericDomain(normalizedData, series), [normalizedData, series]);
+
+  const rawValues = useMemo(() => collectSeriesValues(normalizedData, series), [normalizedData, series]);
+
+  const allNegativeBarChart =
+    plot.kind === "bar" && rawValues.length > 0 && rawValues.every((value) => value < 0);
+
+  const displayData: PlotRow[] = useMemo(() => {
+    if (!allNegativeBarChart) {
+      return normalizedData.map((row) => {
+        const raw: Record<string, number | null> = {};
+        series.forEach((item) => {
+          raw[item.key] = isFiniteNumber(row[item.key]) ? Number(row[item.key]) : null;
+        });
+        return { ...row, __raw__: raw };
+      });
+    }
+
+    return normalizedData.map((row) => {
+      const next: PlotRow = { ...row };
+      const raw: Record<string, number | null> = {};
+
+      series.forEach((item) => {
+        const value = row[item.key];
+        if (isFiniteNumber(value)) {
+          raw[item.key] = value;
+          next[item.key] = Math.abs(value);
+        } else {
+          raw[item.key] = null;
+          next[item.key] = value;
+        }
+      });
+
+      next.__raw__ = raw;
+      return next;
+    });
+  }, [allNegativeBarChart, normalizedData, series]);
+
+  const yDomain = useMemo(() => {
+    if (allNegativeBarChart) return buildMagnitudeDomain(normalizedData, series);
+    return buildNumericDomain(normalizedData, series);
+  }, [allNegativeBarChart, normalizedData, series]);
+
   const colorMap = useMemo(
     () =>
       Object.fromEntries(series.map((item, idx) => [item.key, SERIES_COLORS[idx % SERIES_COLORS.length]])),
@@ -241,7 +316,7 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
         <div className="h-[320px] w-full">
           <ResponsiveContainer width="100%" height="100%">
             {plot.kind === "line" ? (
-              <LineChart data={normalizedData} margin={{ top: 10, right: 20, left: 8, bottom: 8 }}>
+              <LineChart data={displayData} margin={{ top: 10, right: 20, left: 8, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                 <XAxis
                   dataKey="label"
@@ -273,7 +348,7 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
                 ))}
               </LineChart>
             ) : (
-              <BarChart data={normalizedData} margin={{ top: 10, right: 20, left: 8, bottom: 8 }} barGap={10}>
+              <BarChart data={displayData} margin={{ top: 10, right: 20, left: 8, bottom: 8 }} barGap={10}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.25} vertical={false} />
                 <XAxis
                   dataKey="label"
@@ -288,12 +363,20 @@ export default function PulseGeneratedPlotCard({ plot, sport, season, seasonType
                   tick={{ fill: "rgba(255,255,255,0.75)", fontSize: 12 }}
                   axisLine={{ stroke: "rgba(255,255,255,0.15)" }}
                   tickLine={{ stroke: "rgba(255,255,255,0.15)" }}
+                  tickFormatter={
+                    allNegativeBarChart
+                      ? (value: number) => (value === 0 ? "0" : `-${Number(value).toFixed(2)}`)
+                      : undefined
+                  }
                 />
-                <Tooltip cursor={{ fill: "rgba(255,255,255,0.03)" }} content={<SharedTooltip />} />
+                <Tooltip
+                  cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                  content={<SharedTooltip useRawValues={allNegativeBarChart} />}
+                />
                 <Legend wrapperStyle={{ paddingTop: 14 }} formatter={legendFormatter} />
                 {series.map((item) => (
                   <Bar key={item.key} dataKey={item.key} name={item.label} shape={renderRoundedBar}>
-                    {normalizedData.map((_, index) => (
+                    {displayData.map((_, index) => (
                       <Cell key={`${item.key}-${index}`} fill={colorMap[item.key]} />
                     ))}
                   </Bar>
