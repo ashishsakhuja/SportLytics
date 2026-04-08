@@ -1,192 +1,322 @@
 # SportLytics
 
-SportLytics is a full-stack sports analytics platform that ingests historical and live sports data, processes advanced statistics, and visualizes team performance through interactive dashboards.
+SportLytics is a full-stack sports analytics platform that ingests sports data, processes advanced team and game statistics, and delivers interactive dashboards, AI-assisted insights, and community sharing tools across multiple major professional leagues.
 
-The platform supports multiple professional sports leagues and provides automated **AI-generated insights** for each visualization.
+The platform is designed to provide a single analytics environment where users can:
 
-SportLytics combines:
+- explore team performance trends
+- compare recent form and season-long metrics
+- analyze schedule difficulty and scoring patterns
+- read aggregated sports news
+- ask an AI assistant grounded questions about team trends
+- generate, download, and share custom visualizations
 
-- Automated sports data ingestion
-- Advanced statistical processing
-- Interactive visualization dashboards
-- AI-generated analytical insights
-- News aggregation and enrichment
+SportLytics currently supports:
 
-The goal of the platform is to provide a unified analytics environment where users can explore team performance trends, advanced metrics, and contextual insights across multiple sports.
+- **NFL**
+- **NBA**
+- **MLB**
+- **NHL**
 
 ---
 
-## Frontend
+## What SportLytics Includes
 
-- **Next.js**
-- **React**
-- **Recharts** for visualizations
-- Dynamic dashboards for each sport
+SportLytics combines several systems into one platform:
 
-## Backend
+- **multi-sport data ingestion pipelines**
+- **PostgreSQL-backed analytics storage**
+- **FastAPI analytics and AI endpoints**
+- **Next.js frontend dashboards**
+- **custom chart builder**
+- **AI-generated chart captions**
+- **Pulse**, a sports AI assistant for natural-language analytics questions
+- **community sharing features** for charts and discussion
 
-- **FastAPI**
-- REST analytics API
-- AI insight generation endpoints
-
-## Database
-
-- **PostgreSQL**
-- Managed with **Alembic migrations**
-- Stores games, teams, standings, and analytics data
-
-## Data Ingestion
-
-Custom ingestion pipelines populate the database using:
-
-- Sports data APIs
-- Historical game records
-- Scheduled ingestion scripts
-
-## AI Insight System
-
-A lightweight AI system generates short analytical captions for charts using structured statistical summaries.
-
-Insights are cached to avoid repeated model calls.
+The project is built to support both historical backfills and recurring updates for games, news, and team game statistics.
 
 ---
 
 # Core Features
 
-## Multi-Sport Support
+## 1. Multi-Sport Analytics Dashboards
 
-Currently supported leagues:
+Each supported sport has its own dashboard with team-level and league-level analytics.
 
-- NFL
-- NBA
-- MLB
-- NHL
+Available views include:
 
-Each sport has its own analytics dashboard.
-
----
-
-# Analytics Dashboards
-
-Each team dashboard includes advanced visualizations.
-
-## Offensive vs Defensive Performance
-
-Scatter plot showing team scoring vs opponent scoring.
-
-## Rolling Averages
-
-Moving averages showing recent offensive and defensive trends.
-
-## Recent Form
-
-Last-5 vs previous-5 performance comparison.
-
-## Home vs Away Performance
-
-Comparison of scoring margins depending on location.
-
-## Score Distribution
-
-Histogram showing scoring frequency.
-
-## Margin Distribution
-
-Distribution of point differentials across games.
-
-## Close Games
-
-Win/loss results in games decided by small margins.
-
-## Strength of Schedule
-
-Schedule difficulty trends across the season.
-
-## League Scoring Trend
-
-League-wide scoring averages over time.
-
-## League Standings
-
-Current standings snapshot for each conference/division.
+- offensive vs defensive profile
+- rolling scoring averages
+- recent form comparisons
+- home vs away splits
+- score and margin distributions
+- close-game performance
+- strength of schedule trends
+- standings and ranking views
+- in-game and advanced stat breakdowns where available
 
 ---
 
-# AI Generated Insights
+## 2. AI-Generated Chart Captions
 
-Each chart includes an **AI generated insight caption**.
+SportLytics generates short AI captions beneath charts using structured numeric summaries rather than raw full datasets.
 
-The system works as follows:
+This keeps the AI grounded and efficient.
 
-1. Statistical summaries are computed locally in the frontend.
-2. Only summary statistics are sent to the backend.
-3. The backend generates a short explanation.
-4. Results are cached to reduce API calls.
+Typical flow:
 
-Example caption:
+1. the frontend computes a compact numeric summary from the chart data
+2. the backend receives the summary
+3. an AI service generates a short explanation
+4. the result is cached to reduce repeated model calls
 
-> "Buffalo has averaged 31.4 points over the last five games, a 6.2 point increase from their previous five."
+Example output:
 
-
----
-
-# System Requirements
-
-- Python 3.10+
-- Node.js 18+
-- PostgreSQL 14+
-- Redis (optional for caching)
+> “Buffalo has scored noticeably better over its most recent five games, averaging 6.2 more points than in the prior five-game stretch.”
 
 ---
 
-# Installation
+## 3. Pulse AI Assistant
 
-Clone the repository:
+**Pulse** is SportLytics’ AI assistant for sports questions.
+
+Pulse is designed to answer natural-language analytics questions such as:
+
+- “How have the Bills looked in their last five games?”
+- “Which teams are trending up defensively?”
+- “Compare the Eagles and Cowboys recent form”
+- “Who has had the toughest schedule lately?”
+
+Pulse can return:
+
+- structured analytical responses
+- confidence-aware narratives
+- generated charts when a question is visual in nature
+- grounded summaries based on platform data
+
+---
+
+## 4. Custom Builder
+
+The Custom Builder allows users to create their own sports charts using available team and league data.
+
+Users can build views such as:
+
+- team trend lines
+- team overlays
+- metric-vs-metric comparisons
+- season summaries
+- custom chart presets
+- downloadable chart images
+- shareable chart views
+
+---
+
+## 5. News Aggregation
+
+SportLytics ingests and stores sports news content that can be surfaced throughout the platform to provide context around performance, injuries, roster changes, and trending topics.
+
+---
+
+## 6. Community Features
+
+SportLytics includes community functionality for users to share visualizations and participate in conversations around analytics-driven sports discussion.
+
+This includes:
+
+- chart sharing
+- community posting
+- public-facing discussion surfaces
+- user identity and authentication
+- premium-aware gated AI experiences
+
+---
+
+# Tech Stack
+
+## Frontend
+
+- **Next.js**
+- **React**
+- **TypeScript**
+- **Tailwind CSS**
+- **Recharts**
+- **Framer Motion**
+
+## Backend
+
+- **FastAPI**
+- **SQLAlchemy**
+- **Alembic**
+- **Pydantic / pydantic-settings**
+
+## Database / Infrastructure
+
+- **PostgreSQL**
+- **Redis** (optional, used for caching where configured)
+- **Docker Compose** for local infrastructure
+
+## AI / Insight Layer
+
+- AI-backed chart captioning
+- Pulse provider architecture with support for:
+  - **Hugging Face**
+  - **OpenAI**
+- cached AI responses for efficiency
+
+---
+
+# Repository Structure
+
+```text
+SportLytics/
+├── backend/
+│   ├── app/
+│   │   ├── routes/
+│   │   ├── scripts/
+│   │   ├── services/
+│   │   ├── models.py
+│   │   ├── db.py
+│   │   ├── auth.py
+│   │   ├── main.py
+│   │   └── settings.py
+│   ├── alembic/
+│   ├── alembic.ini
+│   └── requirements.txt
+├── frontend/
+│   ├── src/
+│   ├── public/
+│   ├── package.json
+│   └── next.config.ts
+├── infra/
+│   └── docker-compose.yml
+└── README.md
+
+```
+
+Local Development Requirements:
+ - Python 3.10+
+ - Node.js 18+
+ - npm
+ - Docker Desktop or another Docker runtime
+ - PostgreSQL
+
+Recommended:
+ - Redis (optional, for AI response caching)
+ - AI API keys for OpenAI or Hugging Face if using AI features
+
+Environment Configuration:
+
+Create a file at:
 
 ```bash
-git clone https://github.com/your-org/sportlytics.git
-cd sportlytics
+backend/.env
+```
 
-# Backend
+And add the following variables:
+
+```env
+APP_NAME=SportLytics API
+ENV=local
+
+DATABASE_URL=postgresql+psycopg2://sportshub:sportshub@127.0.0.1:5433/sportshub
+
+FRONTEND_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+
+SESSION_COOKIE_NAME=sportlytics_session
+SESSION_COOKIE_SECURE=False
+SESSION_COOKIE_SAMESITE=lax
+SESSION_COOKIE_DOMAIN=
+
+REDIS_URL=redis://127.0.0.1:6379/0
+
+PULSE_MODEL_PROVIDER=huggingface
+PULSE_FALLBACK_PROVIDER=openai
+
+HUGGINGFACE_API_TOKEN=your_huggingface_token_here
+HUGGINGFACE_MODEL=openai/gpt-oss-120b:cerebras
+
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_PULSE_MODEL=gpt-4o-mini
+
+AI_CAPTION_TTL_SECONDS=3600
+AI_CHART_QUERY_TTL_SECONDS=1800
+AI_QUERY_TTL_SECONDS=900
+AI_STORYLINES_TTL_SECONDS=900
+
+SPORTLYTICS_APP_BASE_URL=http://localhost:3000
+```
+
+Adjust values as needed for your local development environment.
+
+Notes: 
+ - If you are using the included Docker Compose setup, the database port may be 5433 locally.
+ - SESSION_COOKIE_SECURE=False is correct for local HTTP development.
+ - If you do not configure AI provider keys, AI-dependent features may fail or degrade locally
+
+Frontend:
+
+```bash
+frontend/.env.local
+```
+
+```env
+NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000
+```
+
+If you intentionally want your frontend to hit deployed backend, set:
+```env
+NEXT_PUBLIC_API_BASE=https://api.sportlytics.net
+```
+
+Running Sportlytics End-To-End Locally:
+
+```bash
+git clone https://github.com/ashishsakhuja/sportlytics.git
+cd sportlytics
+```
+Start local infrastructure (PostgreSQL, Redis):
+```bash
+cd infra
+docker compose up -d
+cd ..
+```
+
+Set up the backend:
 ```bash
 cd backend
-python -m venv SportLytics
-SportLytics\Scripts\activate or source SportLytics/bin/activate #(Win or Mac)
+python -m venv .venv
+```
+
+Windows Powershell:
+```powershell
+.venv\Scripts\Activate.ps1
+```
+```bash
 pip install -r requirements.txt
-
-# Database Setup
-Create PostgreSQL database
-Set database connection:
-Example name: sportshub
-Set connection:
-DATABASE_URL=postgresql+psycopg2://sportshub:sportshub@127.0.0.1:5432/sportshub
-
-Run db migrations
-```bash
 alembic upgrade head
+python -m app.scripts.sync_latest --sports nfl,nba,mlb,nhl --days-back 365 --days-forward 3 --nfl-season 2025 --nfl-season-types REG,POST --stats-lookback-days 365 --stats-only-final
+```
 
-This creates the required tables including:
-- games
-- teams
-- standings
-- news_items
-- ingest_runs
+This sync_latest parameters provided above will run the script for the last 1 season for all sports supported. Change accordingly.
 
-# Data Ingestion
-```bash
-python -m app.scripts.ingest_nfl --season 2025 --season-type REG
-python -m app.scripts.ingest_nba --season 2025
-python -m app.scripts.ingest_mlb --from-date 2015-03-24 --to-date 2015-10-01
-python -m app.scripts.ingest_nhl --season 2025
-
-# Running Backend
+Start the backend server:
 ```bash
 uvicorn app.main:app --reload
+```
+The backend will run at http://127.0.0.1:8000
 
-# API runs at: http://localhost:8000
+Health check:
+http://127.0.0.1:8000/healthz
 
-# Frontend
+Start the frontend:
+
+Open a second terminal
 ```bash
 cd frontend
 npm install
 npm run dev
+```
+
+The frontend will run at http://localhost:3000
+
