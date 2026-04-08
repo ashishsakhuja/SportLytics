@@ -216,35 +216,19 @@ backend/.env
 And add the following variables:
 
 ```env
-APP_NAME=SportLytics API
 ENV=local
 
-DATABASE_URL=postgresql+psycopg2://sportshub:sportshub@127.0.0.1:5433/sportshub
+DATABASE_URL=postgresql://sportshub:sportshub@127.0.0.1:5433/sportshub
+REDIS_URL=redis://localhost:6379/0
 
-FRONTEND_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
-
-SESSION_COOKIE_NAME=sportlytics_session
-SESSION_COOKIE_SECURE=False
-SESSION_COOKIE_SAMESITE=lax
-SESSION_COOKIE_DOMAIN=
-
-REDIS_URL=redis://127.0.0.1:6379/0
+SPORTLYTICS_APP_BASE_URL=http://localhost:3000
 
 PULSE_MODEL_PROVIDER=huggingface
-PULSE_FALLBACK_PROVIDER=openai
-
 HUGGINGFACE_API_TOKEN=your_huggingface_token_here
-HUGGINGFACE_MODEL=openai/gpt-oss-120b:cerebras
+HUGGINGFACE_MODEL=mistralai/Mistral-7B-Instruct-v0.3
 
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_PULSE_MODEL=gpt-4o-mini
-
-AI_CAPTION_TTL_SECONDS=3600
-AI_CHART_QUERY_TTL_SECONDS=1800
-AI_QUERY_TTL_SECONDS=900
-AI_STORYLINES_TTL_SECONDS=900
-
-SPORTLYTICS_APP_BASE_URL=http://localhost:3000
 ```
 
 Adjust values as needed for your local development environment.
