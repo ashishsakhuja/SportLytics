@@ -10,14 +10,17 @@ export type AuthUser = {
   cancel_at_period_end?: boolean;
 };
 
-const USER_KEY = 'sportlytics.auth.user';
+const USER_KEY = "sportlytics.auth.user";
+const TOKEN_KEY = "sportlytics.auth.token";
 
 export function getAuthToken(): string | null {
-  return null;
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(TOKEN_KEY);
+  return raw?.trim() ? raw.trim() : null;
 }
 
 export function getStoredUser(): AuthUser | null {
-  if (typeof window === 'undefined') return null;
+  if (typeof window === "undefined") return null;
   const raw = window.localStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
@@ -28,15 +31,24 @@ export function getStoredUser(): AuthUser | null {
 }
 
 export function setStoredUser(user: AuthUser) {
-  if (typeof window === 'undefined') return;
+  if (typeof window === "undefined") return;
   window.localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
-export function setAuthSession(_token: string | null, user: AuthUser) {
-  setStoredUser(user);
+export function setAuthSession(token: string | null, user: AuthUser) {
+  if (typeof window === "undefined") return;
+
+  if (token?.trim()) {
+    window.localStorage.setItem(TOKEN_KEY, token.trim());
+  } else {
+    window.localStorage.removeItem(TOKEN_KEY);
+  }
+
+  window.localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
 export function clearAuthSession() {
-  if (typeof window === 'undefined') return;
+  if (typeof window === "undefined") return;
   window.localStorage.removeItem(USER_KEY);
+  window.localStorage.removeItem(TOKEN_KEY);
 }
