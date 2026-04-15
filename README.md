@@ -220,7 +220,7 @@ ENV=local
 
 DATABASE_URL=postgresql://sportshub:sportshub@127.0.0.1:5433/sportshub
 REDIS_URL=redis://localhost:6379/0
-
+SPORTLYTICS_PREMIUM_ADMIN_KEY=
 SPORTLYTICS_APP_BASE_URL=http://localhost:3000
 
 PULSE_MODEL_PROVIDER=huggingface
@@ -229,6 +229,10 @@ HUGGINGFACE_MODEL=mistralai/Mistral-7B-Instruct-v0.3
 
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_PULSE_MODEL=gpt-4o-mini
+
+PULSE_FALLBACK_PROVIDER=
+PULSE_TEMPERATURE=0.35
+PULSE_INCLUDE_META=1
 ```
 
 Adjust values as needed for your local development environment.
